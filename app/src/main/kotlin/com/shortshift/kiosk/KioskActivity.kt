@@ -72,6 +72,8 @@ class KioskActivity : AppCompatActivity() {
     private var gesturePhase = 0 // 0=waiting for top-left, 1=waiting for bottom-right
     private var lastTapTime = 0L
     private var adminOverlay: View? = null
+    private lateinit var fullyApi: FullyKioskApi
+    private var lastMoveTrackTime = 0L
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -111,7 +113,7 @@ class KioskActivity : AppCompatActivity() {
             }
         }
 
-        val fullyApi = FullyKioskApi(this, webView) { newStartUrl ->
+        fullyApi = FullyKioskApi(this, webView) { newStartUrl ->
             Log.i(TAG, "Start-URL endret til: $newStartUrl")
         }
         webView.addJavascriptInterface(fullyApi, "fully")
@@ -152,6 +154,20 @@ class KioskActivity : AppCompatActivity() {
     // ==================== Admin Gesture Detection ====================
 
     override fun dispatchTouchEvent(ev: MotionEvent?): Boolean {
+        // Touch-tracking for statistikk (klikk og bevegelser)
+        if (adminOverlay == null && ::fullyApi.isInitialized) {
+            when (ev?.action) {
+                MotionEvent.ACTION_DOWN -> fullyApi.recordTouch(isClick = true)
+                MotionEvent.ACTION_MOVE -> {
+                    val now = System.currentTimeMillis()
+                    if (now - lastMoveTrackTime > 200) { // Throttle bevegelser
+                        fullyApi.recordTouch(isClick = false)
+                        lastMoveTrackTime = now
+                    }
+                }
+            }
+        }
+
         if (ev?.action == MotionEvent.ACTION_DOWN && adminOverlay == null) {
             val cornerPx = (CORNER_SIZE_DP * resources.displayMetrics.density).toInt()
             val now = System.currentTimeMillis()
