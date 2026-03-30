@@ -1,109 +1,71 @@
-# ShortShift Kiosk — Fortsett her
+# Nexus — Fortsett her
 
 ## Hva er dette?
-Android kiosk-app som erstatter Fully Kiosk Browser for ShortShift sine showroom-skjermer.
-Én app som håndterer alt: WiFi-oppsett, provisioning, kiosk-browser med lockdown.
+Nexus erstatter Fully Kiosk Browser for ShortShift sine showroom-skjermer.
+Én app som håndterer alt: WiFi-oppsett, provisioning, kiosk-browser, fjernkontroll.
 
-## Status (2026-03-30)
+## Status (2026-03-30 kveld)
 
-### Fungerer (testet på fysisk Rockchip rk3588 skjerm):
-- **WiFi-picker**: Viser tilgjengelige nettverk, kunde velger og taster passord
-- **Provisioning-kode**: Kunde taster kode → appen henter config fra ShortShift Provisioning API
-- **WebView kiosk**: Laster URL i fullskjerm med device owner lockdown (setLockTaskPackages)
-- **Provisioning API**: Live på https://shortshift-provisioning.netlify.app
-- **Setup codes i Supabase**: Tabell opprettet, fungerer end-to-end
-- **Full flyt**: Boot → WiFi → kode → nettside vises
+### ✅ Fungerer og testet end-to-end:
+- **ShowroomNexus** (`window.fully` bridge) — GPS, touch-statistikk, alle 11 metoder
+- **Provisioning** — WiFi → kode → forhandlervalg → live
+- **Admin-meny** — 2x oppe-venstre + 2x nede-høyre + PIN → WiFi/URL/status
+- **ShortShift keyboard** tvunget som default, Gboard deaktivert
+- **Cloud-fjernkontroll** — Supabase Realtime WebSocket, instant kommandoer
+- **Backoffice Nexus-side** — /nexus med søk, alias, refresh/reboot/set_url, historikk
+- **On-demand heartbeat** — skjermen sender full device-status når dashboardet ber om det
+- **Dashboard-integrasjon** — plingplong, kart, klikk-statistikk fungerer via Azure
 
-### Gjenstår:
-1. ~~**demo.shortshift.io forventer Fully Kiosk**~~ — **LØST (2026-03-30)**: `FullyKioskApi.kt` injiserer fake `window.fully` i WebView via `@JavascriptInterface`. Alle 11 metoder brukt av finn-bruktbil er implementert. `setStartUrl()` lagrer ny URL i SharedPreferences → overlever reboot.
-2. **WiFi-skanning tom** — Noen ganger viser WiFi-listen ingen nettverk. Mulig Android 12 throttling på wifiManager.startScan(). Kan trenge NEARBY_WIFI_DEVICES permission.
-3. **Tastatur** — Kan være trøbbel med on-screen keyboard i fullskjerm-modus. Husk: ikke skjul navigation bars.
-4. **Heartbeat** — Ikke implementert ennå. API-endepunktet finnes, appen trenger en WorkManager-jobb.
-5. **Produksjons-hardening** — Aktiver device restrictions (factory reset, USB debugging) når dev er ferdig.
+### ⏳ Gjenstår:
+1. **Nexus-UI** — vis all device-status (WiFi, GPS, IP, RAM, uptime) som Fully Cloud gjør
+2. **Screenshot** — ta bilde av skjermen remotely
+3. **Boot-heartbeat** — send status én gang ved oppstart automatisk
+4. **Produksjons-hardening** — disable USB, factory reset, safe boot
+5. **WiFi pre-config** — pre-laste kunders WiFi fra fabrikken
+6. **OTA app-oppdatering**
 
-## Arkitektur
+## Repoer
 
-```
-ShortShift Kiosk (device owner) — ÉN app som gjør ALT:
-├── ProvisioningActivity     — WiFi-picker (startes ved boot)
-├── ProvisioningCodeActivity — Kode-input → hent config fra API
-├── KioskActivity            — WebView i fullskjerm med lockdown
-├── DeviceOwnerReceiver      — Device admin, auto-grant permissions
-└── BootReceiver             — Starter appen ved boot
-```
+| Repo | Branch | Hva |
+|------|--------|-----|
+| `short-shift/nexus` | main | Android kiosk-app (Kotlin) |
+| `short-shift/shortshift-provisioning` | main | Provisioning API (Netlify) |
+| `short-shift/shortshift-backoffice` | feature/ztp-provisioning | Nexus fjernkontroll-side |
 
-Fully Kiosk Browser er IKKE involvert. Ingen device owner-konflikt.
+## Supabase-endringer (2026-03-30)
+- `device_commands`-tabell med Realtime + RLS
+- `screens`: nye kolonner (alias, device_type, android_version, wifi_ssid, wifi_signal_dbm, ip_address, latitude, longitude, current_url, screen_on, uptime_seconds, free_memory_mb, mac_address)
 
-## Repoer og infrastruktur
-
-| Repo | Hva | Lokasjon |
-|------|-----|----------|
-| short-shift/shortshift-kiosk | Android kiosk-app (Kotlin) | /Users/vemund/RiderProjects/shortshift-kiosk |
-| short-shift/shortshift-provisioning | Provisioning API (Netlify Functions) | /Users/vemund/RiderProjects/shortshift-provisioning |
-| short-shift/shortshift-backoffice | Admin UI for kodegenerering (branch: feature/ztp-provisioning) | /Users/vemund/RiderProjects/shortshift-backoffice |
-
-- **Provisioning API**: https://shortshift-provisioning.netlify.app
-- **Supabase**: Tabeller setup_codes, device_heartbeats, device_events opprettet
-- **Blueprint**: /Users/vemund/.claude/plans/polymorphic-petting-cookie.md
-
-## Viktig kontekst
-
-- Skjermene er egenutviklede Rockchip rk3588 med Android 12 (SDK 32)
-- Ingen fysiske knapper — kun touchskjerm
-- Fabrikken i Kina kan pre-installere APK og sette device owner via `adb shell dpm set-device-owner`
-- Fully Kiosk EMM pakkenavn: `com.fullykiosk.emm` (activity: `de.ozerov.fully.MainActivity`)
-- Fully Kiosk sin DeviceOwnerReceiver mangler device_admin meta-data — KAN IKKE settes som device owner via ADB eller transferOwnership
-- ALDRI kjør `pm clear` på Fully Kiosk — ødelegger admin-registrering
-- ALDRI sett DISALLOW_DEBUGGING_FEATURES under utvikling — bricker skjermen
-- WiFi-nettverk hos ShortShift: SSID "shortshift"
+## Test-skjerm
+- Screen ID: `0de63926-f472-4f35-83d5-6d503564adfb`
+- Setup-kode: `1111` → demo.shortshift.io (utløper 2. april)
 
 ## Bygg og test
-
 ```bash
-# Bygg APK
 export JAVA_HOME="/Users/vemund/Applications/Android Studio.app/Contents/jbr/Contents/Home"
 cd /Users/vemund/RiderProjects/shortshift-kiosk
 ./gradlew assembleDebug
-
-# Installer via ADB
-export PATH=$PATH:~/Library/Android/sdk/platform-tools
 adb install -r app/build/outputs/apk/debug/app-debug.apk
-
-# Sett device owner (kun på fersk enhet uten kontoer)
-adb shell dpm set-device-owner com.shortshift.kiosk/.DeviceOwnerReceiver
-
-# Reset for ny test (slett config + WiFi)
-adb shell run-as com.shortshift.kiosk rm -rf /data/data/com.shortshift.kiosk/shared_prefs/
-adb shell cmd wifi forget-network 0
 adb reboot
 ```
 
-## Roadmap (fire faser)
+## Roadmap
 
-### Fase 1: Cloud-fjernkontroll ← NESTE
-- HeartbeatWorker + device_commands
-- Backoffice-dashboard for skjermstyring
-- Screenshot-funksjon
+### Fase 1: Cloud-fjernkontroll ← PÅGÅR
+- [x] WebSocket kommando-kanal
+- [x] Backoffice Nexus-side
+- [x] On-demand heartbeat
+- [ ] Komplett device-status i UI
+- [ ] Screenshot
 
 ### Fase 2: Selger-verktøy
-- Selger taster kode → skjermen blir presentasjonsverktøy
-- Sammenlign, totaløkonomi, innbytte, cast til storskjerm
-- "Send til kunde" → QR → alt på kundens telefon
-- Se [docs/PERSONLIG-SHOWROOM.md](docs/PERSONLIG-SHOWROOM.md)
+Se [docs/PERSONLIG-SHOWROOM.md](docs/PERSONLIG-SHOWROOM.md)
 
-### Fase 3: Presence Detection (valgfritt tillegg)
-- USB ToF-sensor → skjermen vet om noen står foran
-- Beriker opplevelsen, men er IKKE forutsetning for fase 2
-- Se [docs/SENSOR-STRATEGI.md](docs/SENSOR-STRATEGI.md)
+### Fase 3: Presence Detection
+Se [docs/SENSOR-STRATEGI.md](docs/SENSOR-STRATEGI.md)
 
 ### Fase 4: Intelligent Showroom
-- Bip (AI-agent) på skjerm
-- Demografi (kamera ML)
-- Importør-dashboard, multi-skjerm-orkestrering
+Bip AI, demografi, importør-dashboard
 
 **Full plan:** `.claude/plans/atomic-tickling-thunder.md`
-
-## Strategiske dokumenter
-- [docs/HVORFOR-EGEN-APP.md](docs/HVORFOR-EGEN-APP.md) — Hvorfor vi bygger egen app istedenfor Fully Kiosk
-- [docs/SENSOR-STRATEGI.md](docs/SENSOR-STRATEGI.md) — Presence detection med ToF/mmWave
-- [docs/PERSONLIG-SHOWROOM.md](docs/PERSONLIG-SHOWROOM.md) — Kunde tar over skjermen, selger-parring, sesjoner
+**Strategidokumenter:** [docs/HVORFOR-EGEN-APP.md](docs/HVORFOR-EGEN-APP.md)
