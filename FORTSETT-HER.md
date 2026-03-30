@@ -78,8 +78,32 @@ adb shell cmd wifi forget-network 0
 adb reboot
 ```
 
-## Neste steg prioritert
-1. Løs demo.shortshift.io-integrasjonen (fake Fully API eller egen konfig-side)
-2. Test full flyt fra factory reset til fungerende skjerm
-3. Legg til heartbeat-rapportering
-4. Send firmware-instruksjoner til fabrikken
+## Roadmap (fire faser)
+
+### Fase 1: Cloud-fjernkontroll ← NESTE
+- HeartbeatWorker + device_commands
+- Backoffice-dashboard for skjermstyring
+- Screenshot-funksjon
+
+### Fase 2: Presence Detection
+- USB ToF-sensor → skjermen vet om noen står foran
+- Tre moduser: STANDBY → SHOWROOM → (trigger for fase 3)
+- Se [docs/SENSOR-STRATEGI.md](docs/SENSOR-STRATEGI.md)
+
+### Fase 3: Personlig Showroom
+- Kunde scanner QR → tar over skjermen
+- Skjerm-til-skjerm navigasjon via Supabase Realtime
+- Selger kobler seg på med NFC → felles salgsverktøy
+- Se [docs/PERSONLIG-SHOWROOM.md](docs/PERSONLIG-SHOWROOM.md)
+
+### Fase 4: Intelligent Showroom
+- Bip (AI-agent) på skjerm
+- Vipps Login, demografi (kamera ML)
+- Importør-dashboard, multi-skjerm-orkestrering
+
+**Full plan:** `.claude/plans/atomic-tickling-thunder.md`
+
+## Strategiske dokumenter
+- [docs/HVORFOR-EGEN-APP.md](docs/HVORFOR-EGEN-APP.md) — Hvorfor vi bygger egen app istedenfor Fully Kiosk
+- [docs/SENSOR-STRATEGI.md](docs/SENSOR-STRATEGI.md) — Presence detection med ToF/mmWave
+- [docs/PERSONLIG-SHOWROOM.md](docs/PERSONLIG-SHOWROOM.md) — Kunde tar over skjermen, selger-parring, sesjoner

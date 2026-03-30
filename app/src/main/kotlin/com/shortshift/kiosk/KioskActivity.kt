@@ -73,6 +73,7 @@ class KioskActivity : AppCompatActivity() {
     private var lastTapTime = 0L
     private var adminOverlay: View? = null
     private lateinit var nexus: ShowroomNexus
+    private lateinit var commandChannel: CommandChannel
     private var lastMoveTrackTime = 0L
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -149,6 +150,20 @@ class KioskActivity : AppCompatActivity() {
 
         Log.i(TAG, "Laster URL: $url")
         webView.loadUrl(url)
+
+        // Koble til Supabase Realtime for fjernkommandoer
+        commandChannel = CommandChannel(
+            context = this,
+            onSetUrl = { newUrl ->
+                Log.i(TAG, "Fjernkommando: sett URL til $newUrl")
+                webView.loadUrl(newUrl)
+            },
+            onRefresh = {
+                Log.i(TAG, "Fjernkommando: refresh")
+                webView.reload()
+            }
+        )
+        commandChannel.connect()
     }
 
     // ==================== Admin Gesture Detection ====================
@@ -949,6 +964,7 @@ class KioskActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        if (::commandChannel.isInitialized) commandChannel.disconnect()
         webView.destroy()
         super.onDestroy()
     }
