@@ -6,6 +6,8 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
+import android.content.ComponentName
+import android.content.Context
 import android.util.Log
 import android.view.View
 import android.view.WindowInsets
@@ -63,6 +65,9 @@ class ProvisioningActivity : AppCompatActivity(), BleProvisioningListener {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        // Fjern eventuelle restriksjoner fra tidligere versjon
+        clearLegacyRestrictions()
+
         storage = SecureStorage(this)
         configurator = FullyKioskConfigurator(this)
 
@@ -116,6 +121,19 @@ class ProvisioningActivity : AppCompatActivity(), BleProvisioningListener {
     override fun onDeviceConnected() {
         Log.i(TAG, "Telefon tilkoblet via BLE")
         updateState("connected")
+    }
+
+    override fun onBleReady() {
+        Log.i(TAG, "BLE advertising OK")
+        updateState("ready")
+    }
+
+    override fun onBleError(message: String) {
+        Log.e(TAG, "BLE-feil: $message")
+        handler.post {
+            statusText.text = "BLE-feil: $message"
+            statusText.setTextColor(getColor(R.color.shortshift_red))
+        }
     }
 
     override fun onDeviceDisconnected() {
@@ -320,6 +338,35 @@ class ProvisioningActivity : AppCompatActivity(), BleProvisioningListener {
             put("fully_settings", settingsJson)
         }
         return json.toString()
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun clearLegacyRestrictions() {
+        try {
+            val dpm = getSystemService(Context.DEVICE_POLICY_SERVICE) as android.app.admin.DevicePolicyManager
+            val componentName = android.content.ComponentName(this, DeviceOwnerReceiver::class.java)
+            if (dpm.isDeviceOwnerApp(packageName)) {
+                val restrictions = listOf(
+                    android.os.UserManager.DISALLOW_FACTORY_RESET,
+                    android.os.UserManager.DISALLOW_DEBUGGING_FEATURES,
+                    android.os.UserManager.DISALLOW_USB_FILE_TRANSFER,
+                    android.os.UserManager.DISALLOW_SAFE_BOOT
+                )
+                for (restriction in restrictions) {
+                    try {
+                        dpm.clearUserRestriction(componentName, restriction)
+                        Log.i(TAG, "Restriksjon fjernet: $restriction")
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Kunne ikke fjerne restriksjon $restriction: ${e.message}")
+                    }
+                }
+                // Re-enable status bar
+                try { dpm.setStatusBarDisabled(componentName, false) } catch (_: Exception) {}
+                Log.i(TAG, "Alle legacy-restriksjoner fjernet")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "clearLegacyRestrictions feilet: ${e.message}")
+        }
     }
 
     private fun parseStoredConfig(jsonString: String): ProvisionConfig {

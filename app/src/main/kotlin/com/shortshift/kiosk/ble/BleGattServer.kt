@@ -28,6 +28,8 @@ interface BleProvisioningListener {
     fun onSetupCodeReceived(code: String)
     fun onDeviceConnected()
     fun onDeviceDisconnected()
+    fun onBleError(message: String)
+    fun onBleReady()
 }
 
 @SuppressLint("MissingPermission")
@@ -72,16 +74,34 @@ class BleGattServer(private val context: Context) {
 
     fun start() {
         if (bluetoothAdapter == null) {
-            Log.e(TAG, "Bluetooth ikke tilgjengelig")
+            Log.e(TAG, "Bluetooth ikke tilgjengelig på denne enheten")
+            handler.post { listener?.onBleError("Bluetooth ikke tilgjengelig") }
             return
         }
 
         if (!bluetoothAdapter.isEnabled) {
+            Log.i(TAG, "Slår på Bluetooth...")
             bluetoothAdapter.enable()
+            // Vent litt på at Bluetooth starter
+            handler.postDelayed({ continueStart() }, 2000)
+        } else {
+            continueStart()
         }
+    }
+
+    private fun continueStart() {
+        if (bluetoothAdapter == null) return
 
         // Set the local name before advertising
-        bluetoothAdapter.name = "ShortShift-$deviceSuffix"
+        val bleName = "ShortShift-$deviceSuffix"
+        bluetoothAdapter.name = bleName
+        Log.i(TAG, "BLE-navn satt til: $bleName (adapter name: ${bluetoothAdapter.name})")
+
+        if (bluetoothAdapter.bluetoothLeAdvertiser == null) {
+            Log.e(TAG, "BLE Advertiser ikke tilgjengelig - enheten støtter kanskje ikke BLE peripheral mode")
+            handler.post { listener?.onBleError("BLE peripheral ikke støttet") }
+            return
+        }
 
         openGattServer()
         startAdvertising()
@@ -164,14 +184,18 @@ class BleGattServer(private val context: Context) {
             .setTimeout(0) // Advertise indefinitely
             .build()
 
+        // Service UUID i advertise data for discovery
         val advertiseData = AdvertiseData.Builder()
+            .addServiceUuid(ParcelUuid(BleConstants.SERVICE_UUID))
+            .setIncludeDeviceName(false) // Navn i scan response i stedet (plass)
+            .build()
+
+        // Navn i scan response
+        val scanResponse = AdvertiseData.Builder()
             .setIncludeDeviceName(true)
             .build()
 
-        val scanResponse = AdvertiseData.Builder()
-            .addServiceUuid(ParcelUuid(BleConstants.SERVICE_UUID))
-            .build()
-
+        Log.i(TAG, "Starter BLE advertising som '${bluetoothAdapter?.name}' med service ${BleConstants.SERVICE_UUID}")
         advertiser?.startAdvertising(settings, advertiseData, scanResponse, advertiseCallback)
         Log.i(TAG, "BLE advertising startet som ShortShift-$deviceSuffix")
     }
@@ -215,10 +239,20 @@ class BleGattServer(private val context: Context) {
     private val advertiseCallback = object : AdvertiseCallback() {
         override fun onStartSuccess(settingsInEffect: AdvertiseSettings?) {
             Log.i(TAG, "Advertising startet OK")
+            handler.post { listener?.onBleReady() }
         }
 
         override fun onStartFailure(errorCode: Int) {
-            Log.e(TAG, "Advertising feilet med kode: $errorCode")
+            val errorMsg = when (errorCode) {
+                ADVERTISE_FAILED_DATA_TOO_LARGE -> "Data for stor"
+                ADVERTISE_FAILED_TOO_MANY_ADVERTISERS -> "For mange advertisers"
+                ADVERTISE_FAILED_ALREADY_STARTED -> "Allerede startet"
+                ADVERTISE_FAILED_INTERNAL_ERROR -> "Intern feil"
+                ADVERTISE_FAILED_FEATURE_UNSUPPORTED -> "BLE advertising ikke støttet"
+                else -> "Ukjent feil ($errorCode)"
+            }
+            Log.e(TAG, "Advertising feilet: $errorMsg")
+            handler.post { listener?.onBleError("BLE: $errorMsg") }
             // Retry after cooldown
             handler.postDelayed({ startAdvertising() }, RECONNECT_DELAY_MS)
         }
