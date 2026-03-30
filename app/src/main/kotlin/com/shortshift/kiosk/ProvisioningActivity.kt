@@ -1,66 +1,70 @@
 package com.shortshift.kiosk
 
 import android.annotation.SuppressLint
+import android.content.BroadcastReceiver
+import android.content.ComponentName
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
+import android.net.NetworkRequest
+import android.net.wifi.ScanResult
+import android.net.wifi.WifiConfiguration
+import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
-import android.provider.Settings
-import android.content.ComponentName
-import android.content.Context
 import android.util.Log
 import android.view.View
 import android.view.WindowInsets
 import android.view.WindowInsetsController
+import android.view.inputmethod.InputMethodManager
+import android.widget.Button
+import android.widget.EditText
+import android.widget.LinearLayout
 import android.widget.ProgressBar
+import android.widget.ScrollView
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
-import com.shortshift.kiosk.api.DeviceInfo
-import com.shortshift.kiosk.api.ProvisionApiClient
-import com.shortshift.kiosk.api.ProvisionConfig
-import com.shortshift.kiosk.api.ProvisionResult
-import com.shortshift.kiosk.ble.BleGattServer
-import com.shortshift.kiosk.ble.BleProvisioningListener
-import com.shortshift.kiosk.config.FullyKioskConfigurator
-import com.shortshift.kiosk.heartbeat.HeartbeatWorker
-import com.shortshift.kiosk.util.SecureStorage
-import com.shortshift.kiosk.wifi.WifiProvisioner
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 @SuppressLint("MissingPermission")
-class ProvisioningActivity : AppCompatActivity(), BleProvisioningListener {
+class ProvisioningActivity : AppCompatActivity() {
 
     companion object {
         private const val TAG = "ProvisioningActivity"
-        private const val LAUNCH_DELAY_MS = 3_000L
-        private const val RETRY_DELAY_MS = 10_000L
+        private const val WIFI_SCAN_INTERVAL_MS = 10_000L
+        private const val WIFI_CONNECT_TIMEOUT_MS = 30_000L
     }
 
-    private lateinit var statusText: TextView
-    private lateinit var deviceSuffixText: TextView
-    private lateinit var progressBar: ProgressBar
-
-    private lateinit var bleServer: BleGattServer
-    private lateinit var wifiProvisioner: WifiProvisioner
-    private lateinit var apiClient: ProvisionApiClient
-    private lateinit var configurator: FullyKioskConfigurator
-    private lateinit var storage: SecureStorage
-
     private val handler = Handler(Looper.getMainLooper())
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+    private lateinit var wifiManager: WifiManager
 
-    private var pendingWifiSsid: String? = null
-    private var pendingWifiPassword: String? = null
-    private var pendingSetupCode: String? = null
-    private var isProvisioning = false
+    // Views
+    private lateinit var titleText: TextView
+    private lateinit var subtitleText: TextView
+    private lateinit var networkList: LinearLayout
+    private lateinit var networkScroll: ScrollView
+    private lateinit var passwordLayout: LinearLayout
+    private lateinit var selectedNetworkText: TextView
+    private lateinit var passwordInput: EditText
+    private lateinit var connectButton: Button
+    private lateinit var backButton: Button
+    private lateinit var progressBar: ProgressBar
+    private lateinit var statusText: TextView
 
-    private val hardwareId: String
-        get() = Settings.Secure.getString(contentResolver, Settings.Secure.ANDROID_ID)
+    private var selectedSsid: String? = null
+    private var isConnecting = false
+
+    private val wifiScanReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            if (intent.action == WifiManager.SCAN_RESULTS_AVAILABLE_ACTION) {
+                displayNetworks()
+            }
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -68,283 +72,315 @@ class ProvisioningActivity : AppCompatActivity(), BleProvisioningListener {
         // Fjern eventuelle restriksjoner fra tidligere versjon
         clearLegacyRestrictions()
 
-        storage = SecureStorage(this)
-        configurator = FullyKioskConfigurator(this)
-
-        // If already provisioned, launch Fully Kiosk immediately
-        if (storage.isProvisioned()) {
-            Log.i(TAG, "Allerede provisjonert, starter Fully Kiosk")
-            val configJson = storage.getConfig()
-            if (configJson != null) {
-                try {
-                    val config = parseStoredConfig(configJson)
-                    configurator.configureAndLaunch(config)
-                } catch (e: Exception) {
-                    Log.e(TAG, "Feil ved parsing av lagret config: ${e.message}", e)
-                }
-            }
-            finish()
-            return
-        }
+        wifiManager = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
 
         setContentView(R.layout.activity_provisioning)
         hideSystemUI()
 
-        statusText = findViewById(R.id.statusText)
-        deviceSuffixText = findViewById(R.id.deviceSuffixText)
+        titleText = findViewById(R.id.titleText)
+        subtitleText = findViewById(R.id.subtitleText)
+        networkList = findViewById(R.id.networkList)
+        networkScroll = findViewById(R.id.networkScroll)
+        passwordLayout = findViewById(R.id.passwordLayout)
+        selectedNetworkText = findViewById(R.id.selectedNetworkText)
+        passwordInput = findViewById(R.id.passwordInput)
+        connectButton = findViewById(R.id.connectButton)
+        backButton = findViewById(R.id.backButton)
         progressBar = findViewById(R.id.progressBar)
+        statusText = findViewById(R.id.statusText)
 
-        wifiProvisioner = WifiProvisioner(this)
-        apiClient = ProvisionApiClient()
+        connectButton.setOnClickListener { onConnectClicked() }
+        backButton.setOnClickListener { showNetworkList() }
 
-        bleServer = BleGattServer(this)
-        bleServer.setListener(this)
+        // Sjekk om allerede tilkoblet WiFi
+        if (isConnectedToWifi()) {
+            launchFullyKiosk()
+            return
+        }
 
-        val suffix = bleServer.deviceSuffix
-        deviceSuffixText.text = getString(R.string.device_prefix) + suffix
+        // Slå på WiFi hvis av
+        if (!wifiManager.isWifiEnabled) {
+            wifiManager.isWifiEnabled = true
+        }
 
-        updateState("ready")
-        bleServer.start()
+        showNetworkList()
+        startWifiScan()
+    }
 
-        Log.i(TAG, "Provisioning-aktivitet startet, BLE annonserer som ShortShift-$suffix")
+    override fun onResume() {
+        super.onResume()
+        registerReceiver(wifiScanReceiver, IntentFilter(WifiManager.SCAN_RESULTS_AVAILABLE_ACTION))
+    }
+
+    override fun onPause() {
+        super.onPause()
+        try { unregisterReceiver(wifiScanReceiver) } catch (_: Exception) {}
     }
 
     override fun onDestroy() {
         super.onDestroy()
-        bleServer.stop()
-        scope.cancel()
         handler.removeCallbacksAndMessages(null)
     }
 
-    // region BleProvisioningListener
+    // ==================== WiFi-skanning ====================
 
-    override fun onDeviceConnected() {
-        Log.i(TAG, "Telefon tilkoblet via BLE")
-        updateState("connected")
+    private fun startWifiScan() {
+        wifiManager.startScan()
+        handler.postDelayed({ startWifiScan() }, WIFI_SCAN_INTERVAL_MS)
     }
 
-    override fun onBleReady() {
-        Log.i(TAG, "BLE advertising OK")
-        updateState("ready")
-    }
+    @SuppressLint("SetTextI18n")
+    private fun displayNetworks() {
+        val results = wifiManager.scanResults
+            .filter { it.SSID.isNotBlank() }
+            .distinctBy { it.SSID }
+            .sortedByDescending { it.level }
 
-    override fun onBleError(message: String) {
-        Log.e(TAG, "BLE-feil: $message")
-        handler.post {
-            statusText.text = "BLE-feil: $message"
-            statusText.setTextColor(getColor(R.color.shortshift_red))
-        }
-    }
+        networkList.removeAllViews()
 
-    override fun onDeviceDisconnected() {
-        Log.i(TAG, "Telefon frakoblet")
-        if (!isProvisioning) {
-            updateState("ready")
-        }
-        // If we have all data, continue provisioning even after disconnect
-    }
-
-    override fun onWifiConfigReceived(ssid: String, password: String) {
-        Log.i(TAG, "WiFi-konfigurasjon mottatt: $ssid")
-        pendingWifiSsid = ssid
-        pendingWifiPassword = password
-
-        // If we already have setup code, start provisioning
-        if (pendingSetupCode != null) {
-            startProvisioning()
-        } else {
-            updateState("connected")
-            bleServer.notifyDeviceStatus("wifi_received")
-        }
-    }
-
-    override fun onSetupCodeReceived(code: String) {
-        Log.i(TAG, "Setup-kode mottatt: $code")
-        pendingSetupCode = code
-
-        // If we already have WiFi config, start provisioning
-        if (pendingWifiSsid != null && pendingWifiPassword != null) {
-            startProvisioning()
-        } else {
-            updateState("connected")
-            bleServer.notifyDeviceStatus("code_received")
-        }
-    }
-
-    // endregion
-
-    private fun startProvisioning() {
-        if (isProvisioning) return
-        isProvisioning = true
-
-        val ssid = pendingWifiSsid ?: return
-        val password = pendingWifiPassword ?: return
-        val setupCode = pendingSetupCode ?: return
-
-        Log.i(TAG, "Starter provisioning-flyt")
-        updateState("configuring_wifi")
-        bleServer.notifyDeviceStatus("configuring_wifi")
-
-        wifiProvisioner.connectToWifi(ssid, password) { wifiSuccess ->
-            if (wifiSuccess) {
-                Log.i(TAG, "WiFi tilkoblet, kaller provisioning-API")
-                callProvisionApi(setupCode)
-            } else {
-                Log.e(TAG, "WiFi-tilkobling feilet")
-                handleError("WiFi-tilkobling feilet")
+        if (results.isEmpty()) {
+            val empty = TextView(this).apply {
+                text = "Søker etter nettverk..."
+                setTextColor(0xFF888888.toInt())
+                textSize = 20f
+                setPadding(0, 48, 0, 48)
             }
+            networkList.addView(empty)
+            return
+        }
+
+        for (result in results) {
+            val row = createNetworkRow(result)
+            networkList.addView(row)
         }
     }
 
-    private fun callProvisionApi(setupCode: String) {
-        updateState("provisioning")
-        bleServer.notifyDeviceStatus("provisioning")
+    @SuppressLint("SetTextI18n")
+    private fun createNetworkRow(result: ScanResult): LinearLayout {
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(32, 28, 32, 28)
+            setBackgroundResource(android.R.drawable.list_selector_background)
+            isClickable = true
+            isFocusable = true
+            setOnClickListener { onNetworkSelected(result.SSID) }
+        }
 
-        scope.launch {
-            try {
-                val deviceInfo = DeviceInfo(
-                    model = Build.MODEL,
-                    androidVersion = Build.VERSION.RELEASE,
-                    appVersion = BuildConfig.VERSION_NAME
-                )
-
-                val result: ProvisionResult = withContext(Dispatchers.IO) {
-                    apiClient.provision(setupCode, hardwareId, deviceInfo)
-                }
-
-                Log.i(TAG, "Provisioning OK: screen_id=${result.screenId}, dealer=${result.dealerName}")
-                onProvisioningComplete(result)
-            } catch (e: Exception) {
-                Log.e(TAG, "Provisioning-API feilet: ${e.message}", e)
-                handleError(e.message ?: "API-feil")
+        // Signal ikon (enkel tekst)
+        val signalLevel = WifiManager.calculateSignalLevel(result.level, 4)
+        val signalText = TextView(this).apply {
+            text = when (signalLevel) {
+                3 -> "▂▄▆█"
+                2 -> "▂▄▆ "
+                1 -> "▂▄  "
+                else -> "▂   "
             }
+            textSize = 16f
+            setTextColor(0xFFFFFFFF.toInt())
+            setPadding(0, 0, 24, 0)
         }
+
+        val nameText = TextView(this).apply {
+            text = result.SSID
+            textSize = 22f
+            setTextColor(0xFFFFFFFF.toInt())
+        }
+
+        // Lås-ikon for sikrede nettverk
+        val secureText = TextView(this).apply {
+            text = if (result.capabilities.contains("WPA") || result.capabilities.contains("WEP")) "🔒" else ""
+            textSize = 18f
+            setPadding(16, 0, 0, 0)
+        }
+
+        row.addView(signalText)
+        row.addView(nameText, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        row.addView(secureText)
+
+        return row
     }
 
-    private fun onProvisioningComplete(result: ProvisionResult) {
-        // Save credentials
-        storage.saveApiToken(result.apiToken)
-        storage.saveScreenId(result.screenId)
-        storage.saveDealerName(result.dealerName)
-        storage.saveConfig(configToJson(result.config))
-        storage.setProvisioned()
+    // ==================== Nettverksvalg ====================
 
-        // Notify phone via BLE
-        bleServer.notifyProvisionResult(success = true, dealerName = result.dealerName, error = null)
-        bleServer.notifyDeviceStatus("complete")
+    private fun onNetworkSelected(ssid: String) {
+        selectedSsid = ssid
+        showPasswordInput(ssid)
+    }
 
-        // Update UI
-        updateState("complete", result.dealerName)
+    @SuppressLint("SetTextI18n")
+    private fun showPasswordInput(ssid: String) {
+        networkScroll.visibility = View.GONE
+        passwordLayout.visibility = View.VISIBLE
+        progressBar.visibility = View.GONE
+        statusText.visibility = View.GONE
 
-        // Schedule heartbeat
-        HeartbeatWorker.schedule(this)
+        titleText.text = "Koble til WiFi"
+        subtitleText.text = ssid
+        selectedNetworkText.text = ssid
+        passwordInput.text.clear()
+        passwordInput.requestFocus()
 
-        // Stop BLE (no longer needed)
-        bleServer.stopAdvertising()
-
-        // Launch Fully Kiosk after delay
+        // Vis tastatur
+        val imm = getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager
         handler.postDelayed({
-            configurator.configureAndLaunch(result.config)
+            imm.showSoftInput(passwordInput, InputMethodManager.SHOW_IMPLICIT)
+        }, 200)
+    }
+
+    @SuppressLint("SetTextI18n")
+    private fun showNetworkList() {
+        selectedSsid = null
+        networkScroll.visibility = View.VISIBLE
+        passwordLayout.visibility = View.GONE
+        progressBar.visibility = View.GONE
+        statusText.visibility = View.GONE
+
+        titleText.text = "Velg WiFi-nettverk"
+        subtitleText.text = "Koble skjermen til internett"
+
+        // Skjul tastatur
+        val imm = getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager
+        imm.hideSoftInputFromWindow(passwordInput.windowToken, 0)
+
+        displayNetworks()
+    }
+
+    // ==================== WiFi-tilkobling ====================
+
+    @SuppressLint("SetTextI18n")
+    private fun onConnectClicked() {
+        val ssid = selectedSsid ?: return
+        val password = passwordInput.text.toString()
+
+        if (password.isEmpty()) {
+            statusText.text = "Skriv inn passord"
+            statusText.setTextColor(0xFFFF4444.toInt())
+            statusText.visibility = View.VISIBLE
+            return
+        }
+
+        isConnecting = true
+        connectButton.isEnabled = false
+        progressBar.visibility = View.VISIBLE
+        statusText.text = "Kobler til $ssid..."
+        statusText.setTextColor(0xFFFFFFFF.toInt())
+        statusText.visibility = View.VISIBLE
+
+        // Skjul tastatur
+        val imm = getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager
+        imm.hideSoftInputFromWindow(passwordInput.windowToken, 0)
+
+        connectToWifi(ssid, password)
+    }
+
+    private fun connectToWifi(ssid: String, password: String) {
+        @Suppress("DEPRECATION")
+        val config = WifiConfiguration().apply {
+            SSID = "\"$ssid\""
+            preSharedKey = "\"$password\""
+            allowedKeyManagement.set(WifiConfiguration.KeyMgmt.WPA_PSK)
+        }
+
+        val netId = wifiManager.addNetwork(config)
+        if (netId == -1) {
+            onWifiFailed("Kunne ikke legge til nettverk")
+            return
+        }
+
+        wifiManager.disconnect()
+        wifiManager.enableNetwork(netId, true)
+        wifiManager.reconnect()
+
+        // Vent på tilkobling
+        waitForConnectivity()
+    }
+
+    private fun waitForConnectivity() {
+        val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        var responded = false
+
+        val request = NetworkRequest.Builder()
+            .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
+            .build()
+
+        val callback = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) {
+                if (!responded) {
+                    responded = true
+                    cm.unregisterNetworkCallback(this)
+                    handler.post { onWifiConnected() }
+                }
+            }
+        }
+
+        cm.registerNetworkCallback(request, callback)
+
+        // Timeout
+        handler.postDelayed({
+            if (!responded) {
+                responded = true
+                try { cm.unregisterNetworkCallback(callback) } catch (_: Exception) {}
+                onWifiFailed("Tilkobling tidsavbrutt — sjekk passord")
+            }
+        }, WIFI_CONNECT_TIMEOUT_MS)
+    }
+
+    @SuppressLint("SetTextI18n")
+    private fun onWifiConnected() {
+        Log.i(TAG, "WiFi tilkoblet!")
+        statusText.text = "Tilkoblet! Starter Fully Kiosk..."
+        statusText.setTextColor(0xFF4CAF50.toInt())
+        progressBar.visibility = View.GONE
+
+        // Start Fully Kiosk etter kort delay
+        handler.postDelayed({ launchFullyKiosk() }, 2000)
+    }
+
+    @SuppressLint("SetTextI18n")
+    private fun onWifiFailed(message: String) {
+        Log.e(TAG, "WiFi feilet: $message")
+        isConnecting = false
+        connectButton.isEnabled = true
+        progressBar.visibility = View.GONE
+        statusText.text = message
+        statusText.setTextColor(0xFFFF4444.toInt())
+        statusText.visibility = View.VISIBLE
+    }
+
+    // ==================== Fully Kiosk ====================
+
+    private fun launchFullyKiosk() {
+        val intent = Intent().apply {
+            setClassName("com.fullykiosk.emm", "de.ozerov.fully.MainActivity")
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        try {
+            Log.i(TAG, "Starter Fully Kiosk EMM")
+            startActivity(intent)
             finish()
-        }, LAUNCH_DELAY_MS)
-    }
-
-    private fun handleError(message: String) {
-        Log.e(TAG, "Provisioning-feil: $message")
-
-        bleServer.notifyProvisionResult(success = false, dealerName = null, error = message)
-        bleServer.notifyDeviceStatus("error")
-        updateState("error")
-
-        // Reset state and retry
-        handler.postDelayed({
-            isProvisioning = false
-            pendingWifiSsid = null
-            pendingWifiPassword = null
-            pendingSetupCode = null
-            updateState("ready")
-        }, RETRY_DELAY_MS)
-    }
-
-    private fun updateState(state: String, extra: String? = null) {
-        handler.post {
-            when (state) {
-                "ready" -> {
-                    statusText.text = getString(R.string.status_ready)
-                    statusText.setTextColor(getColor(R.color.shortshift_white))
-                    progressBar.visibility = View.GONE
-                }
-                "connected" -> {
-                    statusText.text = getString(R.string.status_connected)
-                    statusText.setTextColor(getColor(R.color.shortshift_white))
-                    progressBar.visibility = View.GONE
-                }
-                "configuring_wifi" -> {
-                    statusText.text = getString(R.string.status_wifi)
-                    statusText.setTextColor(getColor(R.color.shortshift_white))
-                    progressBar.visibility = View.VISIBLE
-                }
-                "provisioning" -> {
-                    statusText.text = getString(R.string.status_provisioning)
-                    statusText.setTextColor(getColor(R.color.shortshift_white))
-                    progressBar.visibility = View.VISIBLE
-                }
-                "complete" -> {
-                    val displayText = if (extra != null) {
-                        "${getString(R.string.status_complete)} $extra"
-                    } else {
-                        getString(R.string.status_complete)
-                    }
-                    statusText.text = displayText
-                    statusText.setTextColor(getColor(R.color.shortshift_green))
-                    progressBar.visibility = View.GONE
-                }
-                "error" -> {
-                    statusText.text = getString(R.string.status_error)
-                    statusText.setTextColor(getColor(R.color.shortshift_red))
-                    progressBar.visibility = View.GONE
-                }
+        } catch (e: Exception) {
+            Log.e(TAG, "Kunne ikke starte Fully Kiosk: ${e.message}")
+            handler.post {
+                statusText.text = "Fully Kiosk feil: ${e.message}"
+                statusText.setTextColor(0xFFFF4444.toInt())
+                statusText.visibility = View.VISIBLE
             }
         }
     }
 
-    private fun hideSystemUI() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            window.insetsController?.let {
-                it.hide(WindowInsets.Type.systemBars())
-                it.systemBarsBehavior = WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-            }
-        } else {
-            @Suppress("DEPRECATION")
-            window.decorView.systemUiVisibility = (
-                View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
-                    or View.SYSTEM_UI_FLAG_FULLSCREEN
-                    or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
-                    or View.SYSTEM_UI_FLAG_LAYOUT_STABLE
-                    or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
-                    or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
-                )
-        }
+    // ==================== Hjelpefunksjoner ====================
+
+    private fun isConnectedToWifi(): Boolean {
+        val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        val network = cm.activeNetwork ?: return false
+        val caps = cm.getNetworkCapabilities(network) ?: return false
+        return caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)
     }
 
-    private fun configToJson(config: ProvisionConfig): String {
-        val json = org.json.JSONObject().apply {
-            put("fully_start_url", config.fullyStartUrl)
-            put("heartbeat_interval_sec", config.heartbeatIntervalSec)
-            val settingsJson = org.json.JSONObject()
-            for ((key, value) in config.fullySettings) {
-                settingsJson.put(key, value)
-            }
-            put("fully_settings", settingsJson)
-        }
-        return json.toString()
-    }
-
-    @SuppressLint("MissingPermission")
     private fun clearLegacyRestrictions() {
         try {
             val dpm = getSystemService(Context.DEVICE_POLICY_SERVICE) as android.app.admin.DevicePolicyManager
-            val componentName = android.content.ComponentName(this, DeviceOwnerReceiver::class.java)
+            val componentName = ComponentName(this, DeviceOwnerReceiver::class.java)
             if (dpm.isDeviceOwnerApp(packageName)) {
                 val restrictions = listOf(
                     android.os.UserManager.DISALLOW_FACTORY_RESET,
@@ -352,36 +388,28 @@ class ProvisioningActivity : AppCompatActivity(), BleProvisioningListener {
                     android.os.UserManager.DISALLOW_USB_FILE_TRANSFER,
                     android.os.UserManager.DISALLOW_SAFE_BOOT
                 )
-                for (restriction in restrictions) {
-                    try {
-                        dpm.clearUserRestriction(componentName, restriction)
-                        Log.i(TAG, "Restriksjon fjernet: $restriction")
-                    } catch (e: Exception) {
-                        Log.w(TAG, "Kunne ikke fjerne restriksjon $restriction: ${e.message}")
-                    }
+                for (r in restrictions) {
+                    try { dpm.clearUserRestriction(componentName, r) } catch (_: Exception) {}
                 }
-                // Re-enable status bar
                 try { dpm.setStatusBarDisabled(componentName, false) } catch (_: Exception) {}
-                Log.i(TAG, "Alle legacy-restriksjoner fjernet")
             }
-        } catch (e: Exception) {
-            Log.e(TAG, "clearLegacyRestrictions feilet: ${e.message}")
-        }
+        } catch (_: Exception) {}
     }
 
-    private fun parseStoredConfig(jsonString: String): ProvisionConfig {
-        val json = org.json.JSONObject(jsonString)
-        val fullySettings = mutableMapOf<String, Any>()
-        val settingsJson = json.optJSONObject("fully_settings")
-        if (settingsJson != null) {
-            for (key in settingsJson.keys()) {
-                fullySettings[key] = settingsJson.get(key)
+    private fun hideSystemUI() {
+        // Skjul kun statusbar, IKKE navigasjon — ellers blokkeres tastaturet
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            window.insetsController?.let {
+                it.hide(WindowInsets.Type.statusBars())
+                it.systemBarsBehavior = WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
             }
+        } else {
+            @Suppress("DEPRECATION")
+            window.decorView.systemUiVisibility = (
+                View.SYSTEM_UI_FLAG_FULLSCREEN
+                    or View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                    or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                )
         }
-        return ProvisionConfig(
-            fullyStartUrl = json.getString("fully_start_url"),
-            fullySettings = fullySettings,
-            heartbeatIntervalSec = json.optInt("heartbeat_interval_sec", 900)
-        )
     }
 }
