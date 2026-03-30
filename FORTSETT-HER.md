@@ -15,7 +15,7 @@ Android kiosk-app som erstatter Fully Kiosk Browser for ShortShift sine showroom
 - **Full flyt**: Boot → WiFi → kode → nettside vises
 
 ### Gjenstår:
-1. **demo.shortshift.io forventer Fully Kiosk** — Når kunden velger forhandler på demo.shortshift.io, prøver siden å sette start-URL via Fully Kiosk (som ikke kjører lenger). Løsning: enten injiser fake Fully Kiosk JavaScript API i WebView, eller bygg egen konfig-side.
+1. ~~**demo.shortshift.io forventer Fully Kiosk**~~ — **LØST (2026-03-30)**: `FullyKioskApi.kt` injiserer fake `window.fully` i WebView via `@JavascriptInterface`. Alle 11 metoder brukt av finn-bruktbil er implementert. `setStartUrl()` lagrer ny URL i SharedPreferences → overlever reboot.
 2. **WiFi-skanning tom** — Noen ganger viser WiFi-listen ingen nettverk. Mulig Android 12 throttling på wifiManager.startScan(). Kan trenge NEARBY_WIFI_DEVICES permission.
 3. **Tastatur** — Kan være trøbbel med on-screen keyboard i fullskjerm-modus. Husk: ikke skjul navigation bars.
 4. **Heartbeat** — Ikke implementert ennå. API-endepunktet finnes, appen trenger en WorkManager-jobb.

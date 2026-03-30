@@ -7,12 +7,37 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.os.UserManager
+import android.provider.Settings
 import android.util.Log
 
 class DeviceOwnerReceiver : DeviceAdminReceiver() {
 
     companion object {
         private const val TAG = "DeviceOwnerReceiver"
+
+        private const val SHORTSHIFT_KEYBOARD_PKG = "com.shortshift.keyboard"
+        private const val SHORTSHIFT_KEYBOARD_IME = "$SHORTSHIFT_KEYBOARD_PKG/rkr.simplekeyboard.inputmethod.latin.LatinIME"
+
+        fun enforceInputMethod(context: Context, dpm: DevicePolicyManager, componentName: ComponentName) {
+            if (!dpm.isDeviceOwnerApp(context.packageName)) return
+
+            try {
+                // Tillat kun ShortShift keyboard (deaktiverer Gboard)
+                dpm.setPermittedInputMethods(componentName, listOf(
+                    context.packageName,
+                    SHORTSHIFT_KEYBOARD_PKG
+                ))
+                // Sett ShortShift keyboard som default
+                dpm.setSecureSetting(
+                    componentName,
+                    Settings.Secure.DEFAULT_INPUT_METHOD,
+                    SHORTSHIFT_KEYBOARD_IME
+                )
+                Log.i(TAG, "IME tvunget til ShortShift keyboard")
+            } catch (e: Exception) {
+                Log.e(TAG, "Kunne ikke tvinge IME: ${e.message}")
+            }
+        }
     }
 
     @SuppressLint("MissingPermission")
@@ -63,6 +88,9 @@ class DeviceOwnerReceiver : DeviceAdminReceiver() {
 
         // Auto-grant all runtime permissions for our package
         autoGrantPermissions(context, dpm, componentName)
+
+        // Tving ShortShift-tastaturet, deaktiver Gboard
+        enforceInputMethod(context, dpm, componentName)
     }
 
     private fun autoGrantPermissions(
