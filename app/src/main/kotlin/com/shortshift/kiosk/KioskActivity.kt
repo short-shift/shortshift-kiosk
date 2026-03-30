@@ -72,7 +72,7 @@ class KioskActivity : AppCompatActivity() {
     private var gesturePhase = 0 // 0=waiting for top-left, 1=waiting for bottom-right
     private var lastTapTime = 0L
     private var adminOverlay: View? = null
-    private lateinit var fullyApi: FullyKioskApi
+    private lateinit var nexus: ShowroomNexus
     private var lastMoveTrackTime = 0L
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -113,10 +113,10 @@ class KioskActivity : AppCompatActivity() {
             }
         }
 
-        fullyApi = FullyKioskApi(this, webView) { newStartUrl ->
+        nexus = ShowroomNexus(this, webView) { newStartUrl ->
             Log.i(TAG, "Start-URL endret til: $newStartUrl")
         }
-        webView.addJavascriptInterface(fullyApi, "fully")
+        webView.addJavascriptInterface(nexus, "fully")
 
         progressBar = ProgressBar(this).apply {
             isIndeterminate = true
@@ -155,13 +155,13 @@ class KioskActivity : AppCompatActivity() {
 
     override fun dispatchTouchEvent(ev: MotionEvent?): Boolean {
         // Touch-tracking for statistikk (klikk og bevegelser)
-        if (adminOverlay == null && ::fullyApi.isInitialized) {
+        if (adminOverlay == null && ::nexus.isInitialized) {
             when (ev?.action) {
-                MotionEvent.ACTION_DOWN -> fullyApi.recordTouch(isClick = true)
+                MotionEvent.ACTION_DOWN -> nexus.recordTouch(isClick = true)
                 MotionEvent.ACTION_MOVE -> {
                     val now = System.currentTimeMillis()
                     if (now - lastMoveTrackTime > 200) { // Throttle bevegelser
-                        fullyApi.recordTouch(isClick = false)
+                        nexus.recordTouch(isClick = false)
                         lastMoveTrackTime = now
                     }
                 }

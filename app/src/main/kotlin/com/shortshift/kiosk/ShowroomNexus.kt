@@ -16,24 +16,23 @@ import java.util.Date
 import java.util.Locale
 
 /**
- * Emulerer Fully Kiosk Browser sin JavaScript-API (window.fully).
+ * ShowroomNexus — koblingspunktet mellom fysisk showroom og digital opplevelse.
  *
- * finn-bruktbil / all.bruktbil.shop forventer at window.fully finnes med
- * metoder som getScreenOn(), setStartUrl(), getDeviceId() osv.
- * Denne klassen gir WebView et kompatibelt grensesnitt slik at
- * eksisterende kode fungerer uten endringer.
+ * Injiseres som `window.fully` i WebView for bakoverkompatibilitet med
+ * finn-bruktbil og eksisterende showroom-nettsider. Leverer lokasjon,
+ * touch-statistikk, enhets-ID og konfigurasjon til web-laget.
  */
 @SuppressLint("MissingPermission")
-class FullyKioskApi(
+class ShowroomNexus(
     private val context: Context,
     private val webView: WebView,
     private val onStartUrlChanged: (String) -> Unit
 ) {
     companion object {
-        private const val TAG = "FullyKioskApi"
+        private const val TAG = "Nexus"
         private const val PREFS_NAME = "shortshift_config"
         private const val KEY_URL = "showroom_url"
-        private const val PREFS_FULLY = "fully_settings"
+        private const val PREFS_NEXUS = "nexus_settings"
         private const val PREFS_STATS = "touch_stats"
         private val DATE_FORMAT = SimpleDateFormat("yyyy-MM-dd", Locale.US)
     }
@@ -41,8 +40,8 @@ class FullyKioskApi(
     private val configPrefs: SharedPreferences =
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
-    private val fullyPrefs: SharedPreferences =
-        context.getSharedPreferences(PREFS_FULLY, Context.MODE_PRIVATE)
+    private val nexusPrefs: SharedPreferences =
+        context.getSharedPreferences(PREFS_NEXUS, Context.MODE_PRIVATE)
 
     private val statsPrefs: SharedPreferences =
         context.getSharedPreferences(PREFS_STATS, Context.MODE_PRIVATE)
@@ -67,7 +66,6 @@ class FullyKioskApi(
                 override fun onProviderDisabled(provider: String) {}
             }
 
-            // Prøv GPS først, fall tilbake til network
             if (lm.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
                 lm.requestLocationUpdates(LocationManager.GPS_PROVIDER, 60_000L, 100f, listener)
                 lastLocation = lm.getLastKnownLocation(LocationManager.GPS_PROVIDER)
@@ -78,7 +76,7 @@ class FullyKioskApi(
                     lastLocation = lm.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
                 }
             }
-            Log.i(TAG, "Lokasjonsoppdatering startet, cached: ${lastLocation != null}")
+            Log.i(TAG, "Lokasjon startet, cached: ${lastLocation != null}")
         } catch (e: Exception) {
             Log.e(TAG, "Kunne ikke starte lokasjon: ${e.message}")
         }
@@ -91,7 +89,6 @@ class FullyKioskApi(
         val id = android.provider.Settings.Secure.getString(
             context.contentResolver, android.provider.Settings.Secure.ANDROID_ID
         )
-        Log.i(TAG, "getDeviceId() → $id")
         return id
     }
 
@@ -106,9 +103,7 @@ class FullyKioskApi(
 
     @JavascriptInterface
     fun getStartUrl(): String {
-        val url = configPrefs.getString(KEY_URL, "") ?: ""
-        Log.i(TAG, "getStartUrl() → $url")
-        return url
+        return configPrefs.getString(KEY_URL, "") ?: ""
     }
 
     @JavascriptInterface
@@ -123,69 +118,54 @@ class FullyKioskApi(
     // ==================== Skjerm-status ====================
 
     @JavascriptInterface
-    fun getScreenOn(): Boolean {
-        return true // Kiosk-skjermen er alltid på
-    }
+    fun getScreenOn(): Boolean = true
 
     @JavascriptInterface
     fun turnScreenOff() {
-        Log.i(TAG, "turnScreenOff() — ignorert (håndteres av device owner)")
+        Log.i(TAG, "turnScreenOff() — ignorert")
     }
 
     // ==================== Innstillinger ====================
 
     @JavascriptInterface
     fun getBooleanSetting(key: String): String {
-        val value = fullyPrefs.getString("bool_$key", "false") ?: "false"
-        Log.i(TAG, "getBooleanSetting($key) → $value")
-        return value
+        return nexusPrefs.getString("bool_$key", "false") ?: "false"
     }
 
     @JavascriptInterface
     fun getStringSetting(key: String): String {
-        val value = fullyPrefs.getString("str_$key", "") ?: ""
-        Log.i(TAG, "getStringSetting($key) → $value")
-        return value
+        return nexusPrefs.getString("str_$key", "") ?: ""
     }
 
     @JavascriptInterface
     fun setStringSetting(key: String, value: String) {
-        Log.i(TAG, "setStringSetting($key, $value)")
-        fullyPrefs.edit().putString("str_$key", value).apply()
+        nexusPrefs.edit().putString("str_$key", value).apply()
     }
 
     // ==================== Touch-tracking ====================
 
-    /** Kalles fra KioskActivity.dispatchTouchEvent for å tracke klikk og bevegelser */
     fun recordTouch(isClick: Boolean) {
         val today = DATE_FORMAT.format(Date())
-        val clickKey = "clicks_$today"
-        val moveKey = "moves_$today"
-
         if (isClick) {
-            val clicks = statsPrefs.getInt(clickKey, 0) + 1
-            statsPrefs.edit().putInt(clickKey, clicks).apply()
+            val clicks = statsPrefs.getInt("clicks_$today", 0) + 1
+            statsPrefs.edit().putInt("clicks_$today", clicks).apply()
         } else {
-            val moves = statsPrefs.getInt(moveKey, 0) + 1
-            statsPrefs.edit().putInt(moveKey, moves).apply()
+            val moves = statsPrefs.getInt("moves_$today", 0) + 1
+            statsPrefs.edit().putInt("moves_$today", moves).apply()
         }
     }
 
-    // ==================== Statistikk & lokasjon ====================
+    // ==================== Statistikk ====================
 
     /**
-     * Returnerer CSV i Fully Kiosk-format.
-     * finn-bruktbil leser kolonne 0 (dato), 8 (bevegelser), 11 (klikk).
-     * Vi fyller resten med 0 for kompatibilitet.
-     * Format: dato;0;0;0;0;0;0;0;movements;0;0;clicks
+     * Returnerer touch-statistikk som CSV.
+     * Bakoverkompatibelt format: kolonne 0=dato, 8=bevegelser, 11=klikk.
      */
     @JavascriptInterface
     fun loadStatsCSV(): String {
         val sb = StringBuilder()
-        // Header (Fully-kompatibel)
         sb.appendLine("date;col1;col2;col3;col4;col5;col6;col7;movements;col9;col10;clicks")
 
-        // Siste 7 dager
         val cal = java.util.Calendar.getInstance()
         for (i in 6 downTo 0) {
             cal.time = Date()
@@ -195,30 +175,21 @@ class FullyKioskApi(
             val moves = statsPrefs.getInt("moves_$date", 0)
             sb.appendLine("$date;0;0;0;0;0;0;0;$moves;0;0;$clicks")
         }
-        // Fully-format har en tom linje på slutten
         sb.appendLine()
-
-        val csv = sb.toString()
-        Log.i(TAG, "loadStatsCSV() → ${csv.lines().size} linjer")
-        return csv
+        return sb.toString()
     }
+
+    // ==================== Lokasjon ====================
 
     @JavascriptInterface
     fun getLocation(): String {
-        val loc = lastLocation
-        if (loc == null) {
-            Log.i(TAG, "getLocation() → {} (ingen lokasjon)")
-            return "{}"
-        }
-        val json = JSONObject().apply {
+        val loc = lastLocation ?: return "{}"
+        return JSONObject().apply {
             put("latitude", loc.latitude)
             put("longitude", loc.longitude)
             put("altitude", loc.altitude)
             put("accuracy", loc.accuracy.toDouble())
             put("provider", loc.provider ?: "unknown")
-        }
-        val result = json.toString()
-        Log.i(TAG, "getLocation() → $result")
-        return result
+        }.toString()
     }
 }
