@@ -2,18 +2,25 @@ package com.shortshift.kiosk.util
 
 import android.content.Context
 import android.content.SharedPreferences
-import androidx.security.crypto.EncryptedSharedPreferences
-import androidx.security.crypto.MasterKeys
+import android.util.Log
 
 class SecureStorage(context: Context) {
 
-    private val prefs: SharedPreferences = EncryptedSharedPreferences.create(
-        "shortshift_secure",
-        MasterKeys.getOrCreate(MasterKeys.AES256_GCM_SPEC),
-        context,
-        EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-        EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
-    )
+    private val prefs: SharedPreferences = try {
+        val masterKey = androidx.security.crypto.MasterKeys.getOrCreate(
+            androidx.security.crypto.MasterKeys.AES256_GCM_SPEC
+        )
+        androidx.security.crypto.EncryptedSharedPreferences.create(
+            "shortshift_secure",
+            masterKey,
+            context,
+            androidx.security.crypto.EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+            androidx.security.crypto.EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
+        )
+    } catch (e: Exception) {
+        Log.w("SecureStorage", "EncryptedSharedPreferences feilet, bruker vanlig SharedPreferences", e)
+        context.getSharedPreferences("shortshift_fallback", Context.MODE_PRIVATE)
+    }
 
     fun saveApiToken(token: String) {
         prefs.edit().putString(KEY_API_TOKEN, token).apply()

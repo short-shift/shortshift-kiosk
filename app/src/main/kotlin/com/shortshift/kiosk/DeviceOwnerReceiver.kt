@@ -37,30 +37,29 @@ class DeviceOwnerReceiver : DeviceAdminReceiver() {
             Log.e(TAG, "Kunne ikke deaktivere keyguard: ${e.message}")
         }
 
-        try {
-            // Disable status bar
-            dpm.setStatusBarDisabled(componentName, true)
-            Log.i(TAG, "Statusbar deaktivert")
-        } catch (e: Exception) {
-            Log.e(TAG, "Kunne ikke deaktivere statusbar: ${e.message}")
-        }
+        // TODO: Deaktiver statusbar i produksjon
+        // try {
+        //     dpm.setStatusBarDisabled(componentName, true)
+        // } catch (e: Exception) {
+        //     Log.e(TAG, "Statusbar feilet: ${e.message}")
+        // }
+        Log.i(TAG, "Statusbar-blokkering hoppet over (dev-modus)")
 
-        // Add user restrictions
-        val restrictions = listOf(
-            UserManager.DISALLOW_FACTORY_RESET,
-            UserManager.DISALLOW_DEBUGGING_FEATURES,
-            UserManager.DISALLOW_USB_FILE_TRANSFER,
-            UserManager.DISALLOW_SAFE_BOOT
-        )
-
-        for (restriction in restrictions) {
-            try {
-                dpm.addUserRestriction(componentName, restriction)
-                Log.i(TAG, "Brukerrestriksjon lagt til: $restriction")
-            } catch (e: Exception) {
-                Log.e(TAG, "Kunne ikke legge til restriksjon $restriction: ${e.message}")
-            }
-        }
+        // TODO: Aktiver restriksjoner i produksjon. Deaktivert under utvikling.
+        // val restrictions = listOf(
+        //     UserManager.DISALLOW_FACTORY_RESET,
+        //     UserManager.DISALLOW_DEBUGGING_FEATURES,
+        //     UserManager.DISALLOW_USB_FILE_TRANSFER,
+        //     UserManager.DISALLOW_SAFE_BOOT
+        // )
+        // for (restriction in restrictions) {
+        //     try {
+        //         dpm.addUserRestriction(componentName, restriction)
+        //     } catch (e: Exception) {
+        //         Log.e(TAG, "Restriksjon feilet: $restriction: ${e.message}")
+        //     }
+        // }
+        Log.i(TAG, "Brukerrestriksjoner hoppet over (dev-modus)")
 
         // Auto-grant all runtime permissions for our package
         autoGrantPermissions(context, dpm, componentName)
