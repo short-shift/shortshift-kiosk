@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">ShortShift Kiosk</string>
+    <string name="status_ready">Åpne ShortShift-appen på telefonen din</string>
+    <string name="status_connected">Telefon tilkoblet</string>
+    <string name="status_wifi">Kobler til WiFi…</string>
+    <string name="status_provisioning">Konfigurerer skjerm…</string>
+    <string name="status_complete">Ferdig!</string>
+    <string name="status_error">Noe gikk galt. Prøver igjen…</string>
+    <string name="device_prefix">ShortShift-</string>
+</resources>

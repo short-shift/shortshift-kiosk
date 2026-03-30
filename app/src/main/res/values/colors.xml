@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="shortshift_black">#000000</color>
+    <color name="shortshift_white">#FFFFFF</color>
+    <color name="shortshift_gray">#888888</color>
+    <color name="shortshift_green">#4CAF50</color>
+    <color name="shortshift_red">#F44336</color>
+</resources>
