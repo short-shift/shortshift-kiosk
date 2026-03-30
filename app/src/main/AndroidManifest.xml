@@ -38,6 +38,24 @@
             </intent-filter>
         </activity>
 
+        <activity
+            android:name=".ProvisioningCodeActivity"
+            android:exported="false"
+            android:screenOrientation="landscape"
+            android:theme="@style/Theme.AppCompat.NoActionBar" />
+
+        <activity
+            android:name=".KioskActivity"
+            android:exported="false"
+            android:launchMode="singleTask"
+            android:screenOrientation="landscape"
+            android:theme="@style/Theme.AppCompat.NoActionBar" />
+
+        <activity
+            android:name=".VerificationTest"
+            android:exported="false"
+            android:theme="@style/Theme.AppCompat.NoActionBar" />
+
         <receiver
             android:name=".DeviceOwnerReceiver"
             android:exported="true"

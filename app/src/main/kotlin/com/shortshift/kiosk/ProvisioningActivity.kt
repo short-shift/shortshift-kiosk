@@ -74,6 +74,27 @@ class ProvisioningActivity : AppCompatActivity() {
 
         wifiManager = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
 
+        // Sjekk om allerede provisionert → gå rett til kiosk
+        val prefs = getSharedPreferences("shortshift_config", Context.MODE_PRIVATE)
+        if (prefs.getBoolean("provisioned", false)) {
+            val url = prefs.getString("showroom_url", null)
+            if (url != null) {
+                val kioskIntent = Intent(this, KioskActivity::class.java).apply {
+                    putExtra(KioskActivity.EXTRA_URL, url)
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+                }
+                startActivity(kioskIntent)
+                finish()
+                return
+            }
+        }
+
+        // Sjekk om WiFi allerede er tilkoblet → gå til provisioning-kode
+        if (isConnectedToWifi()) {
+            launchProvisioningCode()
+            return
+        }
+
         setContentView(R.layout.activity_provisioning)
         hideSystemUI()
 
@@ -91,12 +112,6 @@ class ProvisioningActivity : AppCompatActivity() {
 
         connectButton.setOnClickListener { onConnectClicked() }
         backButton.setOnClickListener { showNetworkList() }
-
-        // Sjekk om allerede tilkoblet WiFi
-        if (isConnectedToWifi()) {
-            launchFullyKiosk()
-            return
-        }
 
         // Slå på WiFi hvis av
         if (!wifiManager.isWifiEnabled) {
@@ -328,12 +343,12 @@ class ProvisioningActivity : AppCompatActivity() {
     @SuppressLint("SetTextI18n")
     private fun onWifiConnected() {
         Log.i(TAG, "WiFi tilkoblet!")
-        statusText.text = "Tilkoblet! Starter Fully Kiosk..."
+        statusText.text = "Tilkoblet!"
         statusText.setTextColor(0xFF4CAF50.toInt())
         progressBar.visibility = View.GONE
 
-        // Start Fully Kiosk etter kort delay
-        handler.postDelayed({ launchFullyKiosk() }, 2000)
+        // Gå til provisioning-kode
+        handler.postDelayed({ launchProvisioningCode() }, 1500)
     }
 
     @SuppressLint("SetTextI18n")
@@ -349,23 +364,12 @@ class ProvisioningActivity : AppCompatActivity() {
 
     // ==================== Fully Kiosk ====================
 
-    private fun launchFullyKiosk() {
-        val intent = Intent().apply {
-            setClassName("com.fullykiosk.emm", "de.ozerov.fully.MainActivity")
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    private fun launchProvisioningCode() {
+        val intent = Intent(this, ProvisioningCodeActivity::class.java).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
         }
-        try {
-            Log.i(TAG, "Starter Fully Kiosk EMM")
-            startActivity(intent)
-            finish()
-        } catch (e: Exception) {
-            Log.e(TAG, "Kunne ikke starte Fully Kiosk: ${e.message}")
-            handler.post {
-                statusText.text = "Fully Kiosk feil: ${e.message}"
-                statusText.setTextColor(0xFFFF4444.toInt())
-                statusText.visibility = View.VISIBLE
-            }
-        }
+        startActivity(intent)
+        finish()
     }
 
     // ==================== Hjelpefunksjoner ====================
