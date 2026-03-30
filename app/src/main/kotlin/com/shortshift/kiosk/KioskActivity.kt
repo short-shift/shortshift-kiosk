@@ -161,6 +161,12 @@ class KioskActivity : AppCompatActivity() {
             onRefresh = {
                 Log.i(TAG, "Fjernkommando: refresh")
                 webView.reload()
+            },
+            getLocation = {
+                nexus.getLocationPair()
+            },
+            getCurrentUrl = {
+                webView.url
             }
         )
         commandChannel.connect()

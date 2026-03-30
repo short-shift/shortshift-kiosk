@@ -1,9 +1,13 @@
 package com.shortshift.kiosk
 
+import android.app.ActivityManager
 import android.app.admin.DevicePolicyManager
 import android.content.ComponentName
 import android.content.Context
 import android.content.SharedPreferences
+import android.net.wifi.WifiManager
+import android.os.Build
+import android.os.SystemClock
 import android.util.Log
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -23,7 +27,9 @@ import java.util.concurrent.TimeUnit
 class CommandChannel(
     private val context: Context,
     private val onSetUrl: (String) -> Unit,
-    private val onRefresh: () -> Unit
+    private val onRefresh: () -> Unit,
+    private val getLocation: () -> Pair<Double, Double>? = { null },
+    private val getCurrentUrl: () -> String? = { null }
 ) {
     companion object {
         private const val TAG = "CommandChannel"
@@ -195,7 +201,61 @@ class CommandChannel(
                 }
                 markCommandDone(commandId)
             }
+            "heartbeat" -> {
+                sendStatusToSupabase()
+                markCommandDone(commandId)
+            }
         }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun sendStatusToSupabase() {
+        val screenId = prefs.getString("screen_id", null) ?: return
+
+        Thread {
+            try {
+                val wifiManager = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+                val wifiInfo = wifiManager.connectionInfo
+                val activityManager = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+                val memInfo = ActivityManager.MemoryInfo()
+                activityManager.getMemoryInfo(memInfo)
+                val location = getLocation()
+                val currentUrl = getCurrentUrl()
+
+                val body = JSONObject().apply {
+                    put("last_seen_at", java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", java.util.Locale.US).format(java.util.Date()))
+                    put("device_type", "${Build.MODEL} (${Build.BOARD})")
+                    put("android_version", "${Build.VERSION.RELEASE} (SDK ${Build.VERSION.SDK_INT})")
+                    put("app_version", BuildConfig.VERSION_NAME)
+                    put("wifi_ssid", wifiInfo?.ssid?.replace("\"", "") ?: "")
+                    put("wifi_signal_dbm", wifiInfo?.rssi ?: 0)
+                    put("ip_address", android.text.format.Formatter.formatIpAddress(wifiInfo?.ipAddress ?: 0))
+                    put("mac_address", wifiInfo?.macAddress ?: "")
+                    put("screen_on", true)
+                    put("uptime_seconds", SystemClock.elapsedRealtime() / 1000)
+                    put("free_memory_mb", memInfo.availMem / (1024 * 1024))
+                    if (currentUrl != null) put("current_url", currentUrl)
+                    if (location != null) {
+                        put("latitude", location.first)
+                        put("longitude", location.second)
+                    }
+                }
+
+                val url = "https://$SUPABASE_URL/rest/v1/screens?id=eq.$screenId"
+                val request = Request.Builder()
+                    .url(url)
+                    .patch(body.toString().toRequestBody("application/json".toMediaType()))
+                    .addHeader("apikey", SUPABASE_ANON_KEY)
+                    .addHeader("Authorization", "Bearer $SUPABASE_ANON_KEY")
+                    .addHeader("Content-Type", "application/json")
+                    .addHeader("Prefer", "return=minimal")
+                    .build()
+                client.newCall(request).execute().close()
+                Log.i(TAG, "Status sendt til Supabase")
+            } catch (e: Exception) {
+                Log.e(TAG, "Kunne ikke sende status: ${e.message}")
+            }
+        }.start()
     }
 
     private fun markCommandDone(commandId: String) {

@@ -85,20 +85,20 @@ adb reboot
 - Backoffice-dashboard for skjermstyring
 - Screenshot-funksjon
 
-### Fase 2: Presence Detection
-- USB ToF-sensor → skjermen vet om noen står foran
-- Tre moduser: STANDBY → SHOWROOM → (trigger for fase 3)
-- Se [docs/SENSOR-STRATEGI.md](docs/SENSOR-STRATEGI.md)
-
-### Fase 3: Personlig Showroom
-- Kunde scanner QR → tar over skjermen
-- Skjerm-til-skjerm navigasjon via Supabase Realtime
-- Selger kobler seg på med NFC → felles salgsverktøy
+### Fase 2: Selger-verktøy
+- Selger taster kode → skjermen blir presentasjonsverktøy
+- Sammenlign, totaløkonomi, innbytte, cast til storskjerm
+- "Send til kunde" → QR → alt på kundens telefon
 - Se [docs/PERSONLIG-SHOWROOM.md](docs/PERSONLIG-SHOWROOM.md)
+
+### Fase 3: Presence Detection (valgfritt tillegg)
+- USB ToF-sensor → skjermen vet om noen står foran
+- Beriker opplevelsen, men er IKKE forutsetning for fase 2
+- Se [docs/SENSOR-STRATEGI.md](docs/SENSOR-STRATEGI.md)
 
 ### Fase 4: Intelligent Showroom
 - Bip (AI-agent) på skjerm
-- Vipps Login, demografi (kamera ML)
+- Demografi (kamera ML)
 - Importør-dashboard, multi-skjerm-orkestrering
 
 **Full plan:** `.claude/plans/atomic-tickling-thunder.md`

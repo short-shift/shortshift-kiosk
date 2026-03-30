@@ -1,64 +1,58 @@
-# Personlig Showroom — Skjermen blir kundens
+# Showroom Selger-verktøy — Skjermen som salgsassistent
 
 ## Konsept
 
-En kunde går inn i showroom. Skjermene viser kampanjer. Kunden stopper ved en bil, skjermen våkner. Kunden scanner QR — skjermen blir personlig. Selger kobler seg på. Kunden går videre til neste bil — konteksten følger med. Kunden drar hjem — alt ligger på telefonen.
+Selgeren aktiverer skjermen som et presentasjons- og salgsverktøy. Kunden trenger ikke lære noe nytt — selgeren styrer, kunden ser. Når de er ferdige trykker selger "Send til kunden" → kunden scanner QR → alt ligger på telefonen.
 
 ---
 
-## Tre moduser per skjerm
+## To moduser per skjerm
 
-### 1. STANDBY (ingen foran)
+### 1. STANDBY (default)
 - Kampanjebilder, store tall, eye-catching
 - Roterer mellom predefinerte visninger
-- Presence-sensor: zone = NONE
+- Valgfritt tillegg: presence-sensor kan vekke fra dvale og vise CTA
 
-### 2. SHOWROOM (noen foran)
-- Vanlig bruktbil/nybil-visning for bilen skjermen står ved
-- Presence-sensor trigger: zone = INTERESTED
-- Etter 5 sek uten touch: "Trykk for å utforske" CTA
-
-### 3. PERSONLIG (kunde identifisert)
-- Kundens sesjon — tatt over via QR/NFC/Vipps
-- Viser kundens kontekst: sette biler, innbyttepris, finansiering
-- Selger kan entre sesjonen
-- Alt synces til kundens telefon
+### 2. SELGER-MODUS (selger aktivert)
+- **Trigger:** Selger taster skjult gesture + personlig kode
+- Skjermen blir et presentasjons- og salgsverktøy
+- Selger styrer: sammenligning, totaløkonomi, innbytte, tilbud
+- Kunden ser — trenger ikke forstå systemet
+- "Send til kunden" → QR → alt på kundens telefon
+- **Tilbake til STANDBY:** Selger avslutter / timeout
 
 ---
 
-## Brukerreise: Kunden
+## Brukerreise
 
 ```
 1. Kunde går inn i showroom
    └─ Skjermer viser kampanjer (STANDBY)
+   └─ Kunden ser på biler, trykker på skjermer (som i dag)
 
-2. Stopper ved fellesskjerm
-   └─ Skjermen våkner, viser hele utvalget (SHOWROOM)
-   └─ Kunden browser, finner Volvo XC40
+2. Selger ser på mobilen (SalesZilla live showroom)
+   └─ "Skjerm 2 ved XC40: noen trykker, aktiv 3 min"
+   └─ Eller bare: selger ser kunden i butikken med øynene
 
-3. Trykker "Vis meg denne bilen"
-   └─ Skjermen ved XC40 lyser opp: "Gå til Volvo XC40 →"
-   └─ Veivisning i showroom via skjermene
+3. Selger går bort: "Hei, skal jeg vise deg litt mer?"
+   └─ Taster skjult gesture + personlig kode → SELGER-MODUS
+   └─ Skjermen blir et salgsverktøy
 
-4. Ved XC40-skjermen: scanner QR-kode
-   └─ Skjermen blir PERSONLIG
-   └─ Viser: bilens detaljer + finansiering + "Har du bil å bytte inn?"
-   └─ Kunden taster reg.nr → innbyttepris vises umiddelbart
-
-5. Selger ser varsel i SalesZilla
-   └─ "Kunde ved XC40, interessert i innbytte, 3 min dwell time"
-   └─ Selger går bort, parrer seg med sesjonen (NFC badge)
-   └─ Skjermen blir felles verktøy
-
-6. Selger og kunde sammen
+4. Selger presenterer
    └─ Sammenligning: XC40 vs XC60 side om side
-   └─ Totaløkonomi med kundens innbytte trukket fra
-   └─ Ekstrautstyr, serviceavtale, forsikring
-   └─ "Send til telefonen min" → alt ligger i kundens app
+   └─ Innbyttepris: "Hva kjører du i dag?" → reg.nr → pris live
+   └─ Totaløkonomi med innbytte trukket fra
+   └─ Ekstrautstyr, serviceavtale, forsikring — priseffekt i sanntid
+   └─ "Vis på storskjerm" → konfigurasjonen i stort format
 
-7. Kunden drar hjem
+5. Avslutt: "Vil du ha dette på telefonen?"
+   └─ Selger trykker "Send til kunden" → QR vises
+   └─ Kunden scanner → alt på telefon (biler, priser, tilbud)
+   └─ Lav terskel — kunden scanner bare for å motta
+
+6. Kunden drar hjem
    └─ Skjermen tilbake til STANDBY
-   └─ Kunden fortsetter på telefon: justerer finansiering, deler med partner
+   └─ Kunden har alt på telefon: deler med partner, justerer
    └─ Selger følger opp neste dag med full kontekst
 ```
 
@@ -67,21 +61,62 @@ En kunde går inn i showroom. Skjermene viser kampanjer. Kunden stopper ved en b
 ## Brukerreise: Selger
 
 ```
-1. Morgen: sjekker SalesZilla-dashboard
-   └─ Ser hvilke skjermer som har mest trafikk i dag
+1. Selger sjekker mobilen (SalesZilla live showroom)
+   └─ Ser: "Kari ved XC40, innbytte aktiv, 3 min"
+   └─ Ser: "Ola ved EX30, anonym, sammenligner, 1 min"
+   └─ Ser: "Skjerm 1, 3, 5 — ledig"
 
-2. Varsel: "Kunde ved XC40, engasjert 2+ min"
-   └─ SalesZilla viser: kunden har sett 3 biler, startet innbyttesjekk
-   └─ Selger bestemmer: "Denne er varm, jeg går bort"
+2. Velger: "Kari er varm, jeg går bort"
+   └─ Trykker 3x nede-høyre på skjermen → numerisk felt
+   └─ Taster sin personlige selgerkode (f.eks. 4821)
+   └─ Koblet til Karis sesjon
 
-3. Ved skjermen: parrer seg med NFC badge
-   └─ Skjermen viser selger-kontekst: kundens reise så langt
-   └─ Predefinerte sammenligninger: "Vis XC40 vs XC60"
+3. Skjermen blir felles verktøy
+   └─ Selger ser kundens reise: hvilke biler, innbytte, finansiering
+   └─ Predefinerte actions: "Sammenlign XC40 vs XC60"
    └─ Quick-actions: "Legg til tilhenger", "Vis servicepriser"
+   └─ "Vis på storskjerm" → konfiguratoren i stort format
 
 4. Close: "Send tilbud til kunden"
    └─ Tilbudet ligger på kundens telefon
-   └─ Selger får XP i SalesZilla for assist
+   └─ Selger får XP i SalesZilla
+```
+
+---
+
+## Multi-sesjon: Flere kunder samtidig
+
+Showroomet tilhører aldri én kunde. Hver skjerm har sin egen tilstand:
+
+```
+Skjerm 1 (inngang):      STANDBY — kampanje
+Skjerm 2 (XC40):         PERSONLIG — Kari, innbytte aktiv
+Skjerm 3 (XC60):         STANDBY — kampanje
+Skjerm 4 (EX30):         PERSONLIG — Ola, sammenligner
+Skjerm 5 (fellesskjerm): PERSONLIG — Ahmed, browser utvalg
+Storskjerm:               Cast — viser Karis konfig (styrt fra skjerm 2)
+```
+
+Selger ser alle aktive sesjoner på mobilen og velger hvem hun vil hjelpe.
+
+---
+
+## Cast til storskjerm
+
+Storskjermen er en vanlig Nexus-skjerm i en spesiell rolle: **dum mottaker.**
+
+- Selger/kunde trykker "Vis på storskjerm" → innhold castes
+- All styring fra liten skjerm eller mobil
+- Storskjermen bare renderer — som en Chromecast
+- Konfigurator live: velg farge/utstyr på liten skjerm → oppdateres i stort format
+- Familie/par: én styrer, alle ser — sofagruppen i showroom
+
+```
+Liten skjerm / mobil                    Storskjerm
+───────────────────                     ──────────
+session:cast { target, content }  →     Skifter til cast-modus
+updateSessionState(color: blue)   →     Fargen endres live
+session:endcast                   →     Tilbake til standby
 ```
 
 ---
@@ -209,25 +244,27 @@ fun updateSessionState(stateJson: String)
 
 ---
 
-## Kundeidentifisering
+## Selger-aktivering: Skjult kode, ingen hardware
 
-### Alternativ 1: Anonym QR (MVP)
-- Skjermen viser QR med unik session-URL
-- Kunden scanner → nettleser åpnes → sesjon opprettet
-- Ingen innlogging, ingen persondata
-- Begrensning: mister kontekst hvis kunden lukker nettleseren
+Selger aktiverer skjermen uten ekstra hardware:
 
-### Alternativ 2: Vipps Login (fase 2)
-- QR-kode trigger Vipps-innlogging
-- Full identitet: navn, telefon, e-post
-- Kunden kan fortsette hjemmefra med full kontekst
-- Kobles til kundeportal-visjonen
+1. Tapper skjult gesture (f.eks. 3x nede-høyre) → numerisk felt vises
+2. Taster sin personlige selgerkode (fra SalesZilla, f.eks. 4821)
+3. Skjermen skifter til selger-modus med alle verktøy tilgjengelig
 
-### Alternativ 3: ShortShift-app (fase 3)
-- Kunden laster ned appen (eller PWA)
-- NFC-tap eller BLE proximity for å ta over skjerm
-- Persistent profil med alle besøk, preferanser, tilbud
-- Pusher tilbud og oppfølging
+Samme mønster som admin-menyen. Ingen NFC, ingen badges, ingen ekstra kostnad.
+
+---
+
+## "Send til kunde" — eneste kundeinteraksjon
+
+Kunden trenger aldri styre systemet. Den eneste handlingen er å **motta**:
+
+1. Selger trykker "Send til kunden" → QR-kode vises på skjermen
+2. Kunden scanner med telefonen → nettleser åpnes med alt: biler, priser, tilbud, finansiering
+3. Kunden kan dele med partner, justere, eller bare ha som referanse
+
+Lav terskel. Kjent konsept (som å få kvittering på e-post).
 
 ---
 
@@ -244,8 +281,9 @@ Når selger er koblet til sesjonen, viser skjermen quick-actions:
 | **Tilbud** | Generer tilbud → sendes til kundens telefon |
 | **Prøvekjøring** | Booker prøvekjøring direkte fra skjermen |
 | **Ekstern vurdering** | Starter eksternkjøper-auksjon på kundens innbytte (live!) |
+| **Vis på storskjerm** | Cast innhold til stor showroom-skjerm |
 
-Alle handlinger er predefinerte, ikke fritekst. Selger velger fra en meny. Dette sikrer konsistent opplevelse og hindrer feil.
+Alle handlinger er predefinerte, ikke fritekst. Selger velger fra en meny.
 
 ---
 
@@ -272,7 +310,22 @@ Alle handlinger er predefinerte, ikke fritekst. Selger velger fra en meny. Dette
 
 ## Personvern
 
-- **Anonym QR:** Ingen persondata lagres. Session-token er engangs.
-- **Vipps Login:** GDPR Art. 6(1)(b) — nødvendig for å levere tjenesten kunden ber om
+- **Selger-modus:** Ingen kundedata lagres — sesjonen er selgerens verktøy
+- **"Send til kunde":** Anonym lenke, ingen innlogging påkrevd
 - **Sesjonsdata:** Slettes automatisk etter 30 dager
-- **Selger ser aldri persondata** uten at kunden aktivt gir tilgang via QR/Vipps
+
+---
+
+## Kanskje senere: Kunde-selvbetjening
+
+> Arkivert — interessante ideer som vurderes når selger-verktøyet er validert.
+> Forutsetning: data som viser at kunder faktisk vil og forstår dette.
+
+- **Kunde tar over skjerm:** Scanner QR → Vipps/BankID → skjermen blir personlig
+- **Sesjon følger kunden:** Fra skjerm til skjerm via Supabase Realtime
+- **"Vis meg denne bilen":** Target-skjerm lyser opp med navigasjon i showroom
+- **Vipps Login:** Persistent profil → "Velkommen tilbake, du så på XC40 sist"
+- **Kunde styrer storskjerm:** Fra mobil, som Chromecast
+- **Full selvbetjening:** Innbytte, finansiering, tilbud — uten å snakke med selger
+
+Disse ideene er kraftige, men krever at kunden forstår et nytt konsept. Start med selger-verktøyet, observer hvordan kunder reagerer, og aktiver selvbetjening gradvis basert på reell adferd.

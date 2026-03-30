@@ -181,6 +181,11 @@ class ShowroomNexus(
 
     // ==================== Lokasjon ====================
 
+    fun getLocationPair(): Pair<Double, Double>? {
+        val loc = lastLocation ?: return null
+        return Pair(loc.latitude, loc.longitude)
+    }
+
     @JavascriptInterface
     fun getLocation(): String {
         val loc = lastLocation ?: return "{}"
