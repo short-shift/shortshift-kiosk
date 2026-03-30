@@ -2,122 +2,93 @@
 
 ## TL;DR
 
-Fully Kiosk er en nettleser. Nexus er en intelligent showroom-node. Forskjellen er at vi eier hele stakken fra hardware til sky — og det er det som gjør oss umulig å kopiere.
+Fully Kiosk er en moden, feature-rik kiosk-browser med 600+ skjermer i drift for oss. Vi bygger Nexus fordi vi trenger å bygge forretningslogikk inn i skjermen som Fully ikke er designet for.
 
 ---
 
-## Problemet med Fully Kiosk
+## Hva Fully Kiosk gjør bra
 
-| Problem | Konsekvens |
-|---|---|
-| Kan ikke settes som device owner via ADB | Zero-touch provisioning er umulig |
-| Ingen tilgang til sensorer | Skjermen er blind — vet ikke om noen står foran |
-| Ingen JavaScript bridge vi kontrollerer | Avhengig av Fully sitt API som kan endre seg |
-| Lisenskostnad per enhet | Løpende kostnad som skalerer lineært |
-| Ingen OTA-oppdateringer av logikk | Kan ikke rulle ut nye features remote |
-| Lukket kildekode | Kan ikke debugge, tilpasse, eller utvide |
-| `pm clear` ødelegger admin permanent | Skjørt system som bricker ved feilkonfig |
+Fully er et solid produkt med mye vi ikke trenger å gjenskape:
 
-## Hva Nexus gir oss
+- Device owner provisioning (QR, NFC, Android Enterprise)
+- Remote-kontroll via Fully Cloud (worldwide)
+- 30+ JavaScript API-metoder (device info, screen, brightness, QR, Bluetooth, iBeacon, kamera, TTS, screenshots)
+- Motion detection (kamera + lyd + proximity + akselerometer)
+- Face detection (`getFaceNumber()`)
+- NFC-lesing og Bluetooth-kommunikasjon
+- 300+ konfigurerbare innstillinger via REST/MQTT
+- Scheduled sleep/wake, crash recovery, auto-restart
+- Samsung KNOX-støtte
+- Daglig bruksstatistikk
 
-### 1. Full kontroll over enheten
-
-Nexus er device owner. Det betyr:
-- Lockdown uten avhengighet av tredjepart
-- Programmatisk WiFi-konfig (ingen Android-UI)
-- Auto-grant av alle permissions
-- Remote factory reset
-- OTA app-oppdateringer via heartbeat
-
-### 2. Zero-touch provisioning
-
-Chromecast-style oppsett: skjerm booter → forhandler taster kode → ferdig på 2 minutter.
-
-- Halverer onboarding-tid → flere skjermer ut raskere
-- Fjerner behov for teknisk personell ved installasjon
-- Muliggjør selvbetjent bestilling (skjerm → post → forhandler setter opp selv)
-- Kritisk for Sverige-ekspansjon (ingen trenger å reise dit)
-
-### 3. Sensor-plattform
-
-Med egen app kan vi koble til sensorer via USB Host API:
-- **Nærhetssensor (ToF/mmWave):** Vet om noen står foran skjermen
-- **Trigger-basert innhold:** Skjermen "våkner" når noen nærmer seg
-- **Trafikkdata:** Approaches, engasjement, dwell time — per skjerm, per dag
-- Se [SENSOR-STRATEGI.md](SENSOR-STRATEGI.md) for full spesifikasjon
-
-### 4. JavaScript bridge vi eier (ShowroomNexus)
-
-`window.fully`-kompatibel bridge med utvidelser ingen konkurrent har:
-- GPS-lokasjon for skjermen
-- Touch-statistikk (klikk + bevegelser)
-- Sensor-events (presence, engagement)
-- Fremtidig: kundeidentitet, multi-skjerm-sync
-
-### 5. Data-flyhjulet
-
-```
-Skjerminteraksjon → aggregert data → bedre AI/anbefalinger
-→ mer engasjement → mer data → ...
-```
-
-Fully Kiosk gir oss klikk-tall. Nexus gir oss:
-- Hvilke biler får oppmerksomhet vs. klikk (presence uten touch)
-- Tidsbruk per bil, per skjerm, per showroom
-- Konverteringsattribusjon: online → skjerm → selger → salg
-- A/B-testing av innhold
-- Regional etterspørsel fra 500+ skjermer
+Vi har 600+ skjermer som kjører Fully i produksjon. Det fungerer.
 
 ---
 
-## Strategisk moat
+## Hva vi trenger som Fully ikke er designet for
 
-### Hva en konkurrent må bygge for å kopiere oss
+### Selger-modus
+Selger taster sin kode → skjermen blir et salgsverktøy med sammenligning, totaløkonomi, innbytte, cast til storskjerm. Dette er forretningslogikk som hører til ShortShift, ikke til en generisk kiosk-browser.
 
-1. Kiosk-app med device owner og provisioning
-2. BLE provisioning-pipeline med telefon-app
-3. 500+ fysiske skjermer hos forhandlere
-4. Integrasjon med bildata-systemer
-5. Sensor-lag med presence detection
-6. AI og gamification
+### Skjerm-til-skjerm kommunikasjon
+Cast innhold fra liten skjerm til storskjerm i sanntid. Selger styrer fra én, kunden ser på en annen. Supabase Realtime mellom skjermer i samme showroom. Fully ser hver skjerm som en isolert enhet.
 
-Det tar år og krever fysisk distribusjon. Software-konkurrenter kan ikke gjøre det. Hardware-konkurrenter har ikke softwaren.
+### Egen JavaScript-bridge vi utvider fritt
+ShowroomNexus er `window.fully`-kompatibel (eksisterende kode fungerer uten endring), men vi kan legge til sesjoner, selger-modus, cast-events, og hva vi ellers trenger — uten å vente på Fully sin roadmap.
 
-### Fra "skjermleverandør" til "infrastruktur for bilsalg"
+### Provisioning tilpasset vår flyt
+Kode-basert oppsett der forhandler taster en kode → skjermen henter config fra vårt API og er klar. Tilpasset ShortShifts kunder og forhandlerstruktur, ikke en generisk provisioning.
 
-| | Med Fully Kiosk | Med Nexus |
-|---|---|---|
-| Produkt | Skjerm som viser en nettside | Intelligent showroom-node |
-| Verdi | Visuelt oppsalg | Data + konvertering + AI |
-| Moat | Ingen — kopierbart på en dag | Fysisk + software + data |
-| Prising | Fast per skjerm | Fast + per-transaksjon + data |
-| Skalerbarhet | Lineær (manuelt oppsett) | Eksponentiell (selvbetjent) |
+### Integrasjon med våre systemer
+Direkte kobling til innbyttepris-motoren, SalesZilla, konfiguratoren — fra skjermen. Fully sin JS-bridge gir oss device-info og hardware-tilgang, men forretningslogikk må vi bygge selv uansett.
 
 ---
 
-## Importør-salg: Det strategiske våpenet
+## Hva vi mister ved å bytte
 
-Aggregert data fra skjermene er unikt i markedet. Ingen av de 27 internasjonale aktørene vi har researched har showroom-data.
-
-> "Frydenbø: Skjermene deres viser at 65% av trafikken ved elbil-skjermene er i aldersgruppa 30-45. Kampanjen retter seg mot 25-35. Vil dere justere?"
-
-Importører betaler i dag for dårligere markedsdata fra tradisjonelle kilder. ShortShift sitter på sanntids etterspørselsdata fra det fysiske showrommet.
+- Fullys modne crash recovery og auto-restart (må bygges)
+- Scheduled sleep/wake (må bygges)
+- MQTT-integrasjon (trenger vi ikke per nå)
+- Motion detection med kamera/lyd/akselerometer (Fully har dette innebygd)
+- Face detection (Fully har `getFaceNumber()`)
+- Samsung KNOX-støtte (ikke relevant — vi bruker Rockchip)
+- Battle-tested stabilitet over tusenvis av installasjoner
+- Fully Cloud sitt dashboard og verktøy
 
 ---
 
-## Risiko og mitigering
+## Hva det fjerner
 
-| Risiko | Mitigering |
-|---|---|
-| Android-quirks (Rockchip, OS-versjoner) | Kontrollert hardware — kun én chipset å støtte |
-| Feil i lockdown-kode bricker skjerm | DISALLOW_DEBUGGING_FEATURES aldri i dev. Remote reset via heartbeat |
-| Vedlikeholdskostnad for Kotlin-app | Liten overflate — WebView gjør det meste, appen er thin wrapper |
-| Fully har features vi mangler (crash recovery, etc.) | Bygges inn gradvis — WebView watchdog, scheduled restart |
+- **Lisenskostnad** per enhet (~€8 engangslisens eller ~€1.18/mnd per enhet)
+- **Avhengighet** av tredjeparts prioriteringer for nye features
+- **Begrensningen** at vi kun kan gjøre det Fully eksponerer
 
-## Tidshorisont
+---
 
-| Fase | Tidslinje | Leveranse |
-|---|---|---|
-| Infrastruktur-moat | Nå → 6 mnd | ZTP, heartbeat, remote management, sensor MVP |
-| Intelligent showroom | 6-12 mnd | Kundeidentitet, selger-varsel, innbyttepris på skjerm, analytics |
-| AI-showroom | 12-24 mnd | Bip på skjerm, multi-skjerm-orkestrering, importør-dashboard |
+## Hva det åpner
+
+### Kort sikt
+- Selger-modus med predefinerte salgsverktøy
+- Cast til storskjerm
+- "Send til kunde" via QR
+- Provisioning tilpasset vår flyt
+
+### Lengre sikt
+- Skjerm-til-skjerm sync via Supabase Realtime
+- Integrasjon med innbyttepris, SalesZilla, konfigurator direkte i skjermen
+- Sensor-data (USB-sensorer for trafikk/dwell time)
+- Data til forhandler- og importør-dashboards
+
+---
+
+## Kjerneargumentet
+
+Fully er en generisk kiosk-browser. Den er god til å vise en nettside i fullskjerm, låse ned enheten, og gi remote-kontroll.
+
+Men vi trenger skjermen til å bli et **salgsverktøy** — med modusbytte, sesjoner, skjerm-sync, og integrasjon med våre egne systemer. Det er forretningslogikk, ikke kiosk-funksjonalitet. Og det bygger vi best selv.
+
+---
+
+## Status
+
+Fungerende prototype testet på fysisk skjerm. WiFi-oppsett, provisioning, WebView med lockdown, ShowroomNexus-bridge, cloud-fjernkontroll via Supabase Realtime — alt virker. Fully Kiosk er fortsatt installert men inaktiv på testskjermen.
