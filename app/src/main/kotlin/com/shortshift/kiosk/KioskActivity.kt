@@ -57,7 +57,7 @@ class KioskActivity : AppCompatActivity() {
         private const val CORNER_SIZE_DP = 100
         private const val GESTURE_TIMEOUT_MS = 3000L
         private const val TAP_INTERVAL_MS = 500L
-        private const val DEFAULT_PIN = "1234"
+        private const val DEFAULT_PIN = "3023"
     }
 
     private lateinit var root: FrameLayout
@@ -420,6 +420,21 @@ class KioskActivity : AppCompatActivity() {
         addMenuButton("Endre WiFi") { showWifiPicker(contentArea) }
         addMenuButton("Endre URL") { showUrlEditor(contentArea) }
         addMenuButton("Enhetsstatus") { showDeviceStatus(contentArea) }
+        addMenuButton("Start på nytt") {
+            val dpm = getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
+            val cn = ComponentName(this, DeviceOwnerReceiver::class.java)
+            if (dpm.isDeviceOwnerApp(packageName)) {
+                Log.i(TAG, "Reboot fra admin-meny")
+                dpm.reboot(cn)
+            }
+        }
+        addMenuButton("Gå til Android") {
+            Log.i(TAG, "Avslutter kiosk-modus — går til Android")
+            try { stopLockTask() } catch (e: Exception) {
+                Log.e(TAG, "stopLockTask feilet: ${e.message}")
+            }
+            finish()
+        }
         addMenuButton("Tilbake") {
             root.removeView(overlay)
             adminOverlay = null

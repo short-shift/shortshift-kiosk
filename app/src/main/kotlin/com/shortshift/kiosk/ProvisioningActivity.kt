@@ -18,6 +18,7 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import android.view.MotionEvent
 import android.view.View
 import android.view.WindowInsets
 import android.view.WindowInsetsController
@@ -40,6 +41,7 @@ class ProvisioningActivity : AppCompatActivity() {
     }
 
     private val handler = Handler(Looper.getMainLooper())
+    private val adminEscape by lazy { AdminEscape(this) }
     private lateinit var wifiManager: WifiManager
 
     // Views
@@ -120,6 +122,11 @@ class ProvisioningActivity : AppCompatActivity() {
 
         showNetworkList()
         startWifiScan()
+    }
+
+    override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
+        if (adminEscape.handleTouchEvent(ev)) return true
+        return super.dispatchTouchEvent(ev)
     }
 
     override fun onResume() {
