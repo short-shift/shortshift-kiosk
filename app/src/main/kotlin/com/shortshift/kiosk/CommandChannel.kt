@@ -7,22 +7,25 @@ import android.content.Context
 import android.content.SharedPreferences
 import android.net.wifi.WifiManager
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
-import okhttp3.Response
-import okhttp3.WebSocket
-import okhttp3.WebSocketListener
 import org.json.JSONObject
 import java.util.concurrent.TimeUnit
 
 /**
- * Realtime-kanal til Supabase for fjernkontroll av skjermen.
- * Lytter på INSERT i device_commands-tabellen filtrert på screen_id.
- * Når backoffice sender en kommando, utføres den umiddelbart.
+ * Kommunikasjonskanal mellom skjermen og ShortShift sin provisioning-API.
+ * Erstatter direkte Supabase-tilkobling med sikker token-basert polling.
+ *
+ * - Poller commands-pending hvert 30s for ventende kommandoer
+ * - Sender heartbeat med full device-status hvert 5. minutt
+ * - ACK-er kommandoer via commands-ack
+ * - Ingen Supabase-nøkler i appen — alt via Bearer token
  */
 class CommandChannel(
     private val context: Context,
@@ -33,136 +36,95 @@ class CommandChannel(
 ) {
     companion object {
         private const val TAG = "CommandChannel"
-        private const val SUPABASE_URL = "mllutwgdiddbskbtiukv.supabase.co"
-        private const val SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1sbHV0d2dkaWRkYnNrYnRpdWt2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzEyMzg4NTcsImV4cCI6MjA4NjU5ODg1N30.F2rY0Oi6TmyDrZ2atRys8yGxUjZw5enf-r1BUtF0fcI"
+        private const val API_BASE = "https://shortshift-provisioning.netlify.app/.netlify/functions"
+        private const val POLL_INTERVAL_MS = 30_000L
+        private const val HEARTBEAT_INTERVAL_MS = 300_000L // 5 minutter
         private const val PREFS_NAME = "shortshift_config"
     }
 
     private val client = OkHttpClient.Builder()
-        .readTimeout(0, TimeUnit.MILLISECONDS) // Ingen timeout for WebSocket
-        .pingInterval(30, TimeUnit.SECONDS)
+        .connectTimeout(15, TimeUnit.SECONDS)
+        .readTimeout(15, TimeUnit.SECONDS)
         .build()
 
-    private var webSocket: WebSocket? = null
     private val prefs: SharedPreferences = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+    private val handler = Handler(Looper.getMainLooper())
+    private var isRunning = false
+
+    private val pollRunnable = object : Runnable {
+        override fun run() {
+            if (!isRunning) return
+            Thread { pollCommands() }.start()
+            handler.postDelayed(this, POLL_INTERVAL_MS)
+        }
+    }
+
+    private val heartbeatRunnable = object : Runnable {
+        override fun run() {
+            if (!isRunning) return
+            Thread { sendHeartbeat() }.start()
+            handler.postDelayed(this, HEARTBEAT_INTERVAL_MS)
+        }
+    }
 
     fun connect() {
         val screenId = prefs.getString("screen_id", null)
-        if (screenId.isNullOrBlank()) {
-            Log.w(TAG, "Ingen screen_id, kan ikke koble til")
+        val apiToken = prefs.getString("api_token", null)
+
+        if (screenId.isNullOrBlank() || apiToken.isNullOrBlank()) {
+            Log.w(TAG, "Mangler screen_id eller api_token, kan ikke starte")
             return
         }
 
-        val url = "wss://$SUPABASE_URL/realtime/v1/websocket?apikey=$SUPABASE_ANON_KEY&vsn=1.0.0"
+        isRunning = true
+        Log.i(TAG, "Starter kommando-polling (${POLL_INTERVAL_MS / 1000}s) og heartbeat (${HEARTBEAT_INTERVAL_MS / 1000}s)")
 
-        val request = Request.Builder()
-            .url(url)
-            .build()
+        // Første heartbeat umiddelbart, deretter periodisk
+        Thread { sendHeartbeat() }.start()
+        handler.postDelayed(heartbeatRunnable, HEARTBEAT_INTERVAL_MS)
 
-        webSocket = client.newWebSocket(request, object : WebSocketListener() {
-            override fun onOpen(webSocket: WebSocket, response: Response) {
-                Log.i(TAG, "WebSocket tilkoblet")
-
-                // Join channel: device_commands filtrert på screen_id
-                val joinMsg = JSONObject().apply {
-                    put("topic", "realtime:public:device_commands:screen_id=eq.$screenId")
-                    put("event", "phx_join")
-                    put("payload", JSONObject().apply {
-                        put("config", JSONObject().apply {
-                            put("broadcast", JSONObject().apply {
-                                put("self", false)
-                            })
-                            put("postgres_changes", org.json.JSONArray().apply {
-                                put(JSONObject().apply {
-                                    put("event", "INSERT")
-                                    put("schema", "public")
-                                    put("table", "device_commands")
-                                    put("filter", "screen_id=eq.$screenId")
-                                })
-                            })
-                        })
-                    })
-                    put("ref", "1")
-                }
-                webSocket.send(joinMsg.toString())
-                Log.i(TAG, "Abonnerer på kommandoer for screen: $screenId")
-
-                // Start heartbeat (Supabase Realtime krever phoenix heartbeat)
-                startPhoenixHeartbeat(webSocket)
-            }
-
-            override fun onMessage(webSocket: WebSocket, text: String) {
-                try {
-                    val msg = JSONObject(text)
-                    val event = msg.optString("event", "")
-
-                    when (event) {
-                        "postgres_changes" -> {
-                            val payload = msg.getJSONObject("payload")
-                            val data = payload.optJSONObject("data")
-                            val record = data?.optJSONObject("record")
-                                ?: payload.optJSONObject("record")
-                            if (record != null) {
-                                handleCommand(record)
-                            } else {
-                                Log.w(TAG, "Ingen record i payload: $payload")
-                            }
-                        }
-                        "phx_reply" -> {
-                            val payload = msg.optJSONObject("payload")
-                            val status = payload?.optString("status", "")
-                            Log.i(TAG, "Reply: $status")
-                        }
-                        "phx_error" -> {
-                            Log.e(TAG, "Channel error: $text")
-                        }
-                        else -> {
-                            if (event != "phx_reply" && event != "heartbeat") {
-                                Log.i(TAG, "Event '$event': ${text.take(200)}")
-                            }
-                        }
-                    }
-                } catch (e: Exception) {
-                    Log.e(TAG, "Feil ved parsing: ${e.message} — rå: ${text.take(300)}")
-                }
-            }
-
-            override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-                Log.e(TAG, "WebSocket feilet: ${t.message}")
-                // Reconnect etter 5 sekunder
-                android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
-                    Log.i(TAG, "Forsøker reconnect...")
-                    connect()
-                }, 5000)
-            }
-
-            override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-                Log.i(TAG, "WebSocket lukket: $reason")
-                // Reconnect
-                android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
-                    connect()
-                }, 5000)
-            }
-        })
+        // Første poll etter kort forsinkelse, deretter periodisk
+        handler.postDelayed(pollRunnable, 3000)
     }
 
-    private fun startPhoenixHeartbeat(ws: WebSocket) {
-        val heartbeat = JSONObject().apply {
-            put("topic", "phoenix")
-            put("event", "heartbeat")
-            put("payload", JSONObject())
-            put("ref", null as Any?)
-        }
-        Thread {
-            while (true) {
-                try {
-                    Thread.sleep(30_000)
-                    ws.send(heartbeat.toString())
-                } catch (_: Exception) {
-                    break
-                }
+    fun disconnect() {
+        isRunning = false
+        handler.removeCallbacks(pollRunnable)
+        handler.removeCallbacks(heartbeatRunnable)
+        Log.i(TAG, "Stoppet polling og heartbeat")
+    }
+
+    private fun getApiToken(): String? = prefs.getString("api_token", null)
+
+    private fun pollCommands() {
+        val token = getApiToken() ?: return
+
+        try {
+            val request = Request.Builder()
+                .url("$API_BASE/commands-pending")
+                .get()
+                .addHeader("Authorization", "Bearer $token")
+                .build()
+
+            val response = client.newCall(request).execute()
+            val body = response.body?.string()
+            response.close()
+
+            if (!response.isSuccessful) {
+                Log.w(TAG, "Poll feilet: ${response.code}")
+                return
             }
-        }.start()
+
+            val json = JSONObject(body ?: "{}")
+            val commands = json.optJSONArray("commands") ?: return
+
+            for (i in 0 until commands.length()) {
+                val cmd = commands.getJSONObject(i)
+                handleCommand(cmd)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Poll-feil: ${e.message}")
+        }
     }
 
     private fun handleCommand(record: JSONObject) {
@@ -176,14 +138,12 @@ class CommandChannel(
             "set_url" -> {
                 if (payload.startsWith("http")) {
                     prefs.edit().putString("showroom_url", payload).apply()
-                    android.os.Handler(android.os.Looper.getMainLooper()).post {
-                        onSetUrl(payload)
-                    }
-                    markCommandDone(commandId)
+                    handler.post { onSetUrl(payload) }
+                    acknowledgeCommand(commandId)
                 }
             }
             "reboot" -> {
-                markCommandDone(commandId)
+                acknowledgeCommand(commandId)
                 try {
                     val dpm = context.getSystemService(Context.DEVICE_POLICY_SERVICE)
                         as DevicePolicyManager
@@ -196,96 +156,108 @@ class CommandChannel(
                 }
             }
             "refresh" -> {
-                android.os.Handler(android.os.Looper.getMainLooper()).post {
-                    onRefresh()
-                }
-                markCommandDone(commandId)
+                handler.post { onRefresh() }
+                acknowledgeCommand(commandId)
             }
             "heartbeat" -> {
-                sendStatusToSupabase()
-                markCommandDone(commandId)
+                sendHeartbeat()
+                acknowledgeCommand(commandId)
             }
         }
     }
 
-    @Suppress("DEPRECATION")
-    private fun sendStatusToSupabase() {
-        val screenId = prefs.getString("screen_id", null) ?: return
+    private fun acknowledgeCommand(commandId: String) {
+        if (commandId.isBlank()) return
+
+        val token = getApiToken() ?: return
 
         Thread {
             try {
-                val wifiManager = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
-                val wifiInfo = wifiManager.connectionInfo
-                val activityManager = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
-                val memInfo = ActivityManager.MemoryInfo()
-                activityManager.getMemoryInfo(memInfo)
-                val location = getLocation()
-                val currentUrl = getCurrentUrl()
-
                 val body = JSONObject().apply {
-                    put("last_seen_at", java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", java.util.Locale.US).format(java.util.Date()))
-                    put("device_type", "${Build.MODEL} (${Build.BOARD})")
-                    put("android_version", "${Build.VERSION.RELEASE} (SDK ${Build.VERSION.SDK_INT})")
-                    put("app_version", BuildConfig.VERSION_NAME)
-                    put("wifi_ssid", wifiInfo?.ssid?.replace("\"", "") ?: "")
-                    put("wifi_signal_dbm", wifiInfo?.rssi ?: 0)
-                    put("ip_address", android.text.format.Formatter.formatIpAddress(wifiInfo?.ipAddress ?: 0))
-                    put("mac_address", wifiInfo?.macAddress ?: "")
-                    put("screen_on", true)
-                    put("uptime_seconds", SystemClock.elapsedRealtime() / 1000)
-                    put("free_memory_mb", memInfo.availMem / (1024 * 1024))
-                    if (currentUrl != null) put("current_url", currentUrl)
-                    if (location != null) {
-                        put("latitude", location.first)
-                        put("longitude", location.second)
+                    put("command_id", commandId)
+                }
+
+                val request = Request.Builder()
+                    .url("$API_BASE/commands-ack")
+                    .post(body.toString().toRequestBody("application/json".toMediaType()))
+                    .addHeader("Authorization", "Bearer $token")
+                    .build()
+
+                val response = client.newCall(request).execute()
+                response.close()
+
+                if (response.isSuccessful) {
+                    Log.i(TAG, "Kommando $commandId ACK-et")
+                } else {
+                    Log.w(TAG, "ACK feilet: ${response.code}")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "ACK-feil: ${e.message}")
+            }
+        }.start()
+    }
+
+    @Suppress("DEPRECATION")
+    private fun sendHeartbeat() {
+        val token = getApiToken() ?: return
+        val hardwareId = prefs.getString("hardware_id", null)
+            ?: android.provider.Settings.Secure.getString(context.contentResolver, android.provider.Settings.Secure.ANDROID_ID)
+
+        try {
+            val wifiManager = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+            val wifiInfo = wifiManager.connectionInfo
+            val activityManager = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+            val memInfo = ActivityManager.MemoryInfo()
+            activityManager.getMemoryInfo(memInfo)
+            val location = getLocation()
+            val currentUrl = getCurrentUrl()
+
+            val body = JSONObject().apply {
+                put("hardware_id", hardwareId)
+                put("device_type", "${Build.MODEL} (${Build.BOARD})")
+                put("android_version", "${Build.VERSION.RELEASE} (SDK ${Build.VERSION.SDK_INT})")
+                put("app_version", BuildConfig.VERSION_NAME)
+                put("wifi_ssid", wifiInfo?.ssid?.replace("\"", "") ?: "")
+                put("wifi_signal_dbm", wifiInfo?.rssi ?: 0)
+                put("ip_address", android.text.format.Formatter.formatIpAddress(wifiInfo?.ipAddress ?: 0))
+                put("mac_address", wifiInfo?.macAddress ?: "")
+                put("screen_on", true)
+                put("uptime_seconds", SystemClock.elapsedRealtime() / 1000)
+                put("free_memory_mb", memInfo.availMem / (1024 * 1024))
+                if (currentUrl != null) put("current_url", currentUrl)
+                if (location != null) {
+                    put("latitude", location.first)
+                    put("longitude", location.second)
+                }
+            }
+
+            val request = Request.Builder()
+                .url("$API_BASE/provision-heartbeat")
+                .post(body.toString().toRequestBody("application/json".toMediaType()))
+                .addHeader("Authorization", "Bearer $token")
+                .build()
+
+            val response = client.newCall(request).execute()
+            val responseBody = response.body?.string()
+            response.close()
+
+            if (response.isSuccessful) {
+                Log.i(TAG, "Heartbeat sendt via API")
+
+                // Sjekk om heartbeat-respons inneholder ventende kommandoer (piggyback)
+                val json = JSONObject(responseBody ?: "{}")
+                val commands = json.optJSONArray("commands")
+                if (commands != null && commands.length() > 0) {
+                    Log.i(TAG, "Piggyback: ${commands.length()} ventende kommandoer i heartbeat-respons")
+                    for (i in 0 until commands.length()) {
+                        handleCommand(commands.getJSONObject(i))
                     }
                 }
-
-                val url = "https://$SUPABASE_URL/rest/v1/screens?id=eq.$screenId"
-                val request = Request.Builder()
-                    .url(url)
-                    .patch(body.toString().toRequestBody("application/json".toMediaType()))
-                    .addHeader("apikey", SUPABASE_ANON_KEY)
-                    .addHeader("Authorization", "Bearer $SUPABASE_ANON_KEY")
-                    .addHeader("Content-Type", "application/json")
-                    .addHeader("Prefer", "return=minimal")
-                    .build()
-                client.newCall(request).execute().close()
-                Log.i(TAG, "Status sendt til Supabase")
-            } catch (e: Exception) {
-                Log.e(TAG, "Kunne ikke sende status: ${e.message}")
+            } else {
+                Log.w(TAG, "Heartbeat feilet: ${response.code}")
             }
-        }.start()
-    }
-
-    private fun markCommandDone(commandId: String) {
-        if (commandId.isBlank()) return
-        // Oppdater status via Supabase REST API
-        Thread {
-            try {
-                val url = "https://$SUPABASE_URL/rest/v1/device_commands?id=eq.$commandId"
-                val body = JSONObject().apply {
-                    put("status", "done")
-                    put("executed_at", java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", java.util.Locale.US).format(java.util.Date()))
-                }
-                val request = Request.Builder()
-                    .url(url)
-                    .patch(body.toString().toRequestBody("application/json".toMediaType()))
-                    .addHeader("apikey", SUPABASE_ANON_KEY)
-                    .addHeader("Authorization", "Bearer $SUPABASE_ANON_KEY")
-                    .addHeader("Content-Type", "application/json")
-                    .addHeader("Prefer", "return=minimal")
-                    .build()
-                client.newCall(request).execute().close()
-                Log.i(TAG, "Kommando $commandId markert som done")
-            } catch (e: Exception) {
-                Log.e(TAG, "Kunne ikke markere kommando: ${e.message}")
-            }
-        }.start()
-    }
-
-    fun disconnect() {
-        webSocket?.close(1000, "App lukkes")
-        webSocket = null
+        } catch (e: Exception) {
+            Log.e(TAG, "Heartbeat-feil: ${e.message}")
+        }
     }
 }
