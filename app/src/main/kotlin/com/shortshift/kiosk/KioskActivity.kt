@@ -64,6 +64,9 @@ class KioskActivity : AppCompatActivity() {
     private lateinit var webView: WebView
     private lateinit var progressBar: ProgressBar
     private lateinit var errorText: TextView
+    private var errorOverlay: View? = null
+    private var retryCountdown: Runnable? = null
+    private var isShowingError = false
     private val handler = Handler(Looper.getMainLooper())
 
     // Admin gesture state
@@ -75,6 +78,7 @@ class KioskActivity : AppCompatActivity() {
     private lateinit var nexus: ShowroomNexus
     private lateinit var commandChannel: CommandChannel
     private var lastMoveTrackTime = 0L
+    @Volatile private var currentWebViewUrl: String? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -90,6 +94,7 @@ class KioskActivity : AppCompatActivity() {
         root.setBackgroundColor(Color.BLACK)
 
         webView = WebView(this).apply {
+            setBackgroundColor(Color.BLACK)
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
             settings.mediaPlaybackRequiresUserGesture = false
@@ -166,7 +171,7 @@ class KioskActivity : AppCompatActivity() {
                 nexus.getLocationPair()
             },
             getCurrentUrl = {
-                webView.url
+                currentWebViewUrl
             }
         )
         commandChannel.connect()
@@ -304,6 +309,7 @@ class KioskActivity : AppCompatActivity() {
             setBackgroundColor(0xFF333333.toInt())
             setTextColor(Color.WHITE)
             setOnClickListener {
+                hideKeyboard()
                 root.removeView(overlay)
                 adminOverlay = null
                 hideSystemUI()
@@ -319,6 +325,7 @@ class KioskActivity : AppCompatActivity() {
             setBackgroundColor(0xFF4CAF50.toInt())
             setTextColor(Color.WHITE)
             setOnClickListener {
+                hideKeyboard()
                 val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
                 val correctPin = prefs.getString("admin_pin", DEFAULT_PIN)
                 if (pinInput.text.toString() == correctPin) {
@@ -357,16 +364,19 @@ class KioskActivity : AppCompatActivity() {
             FrameLayout.LayoutParams.MATCH_PARENT
         ))
 
+        // PIN er eneste input — autofokus + tastatur opp
         pinInput.requestFocus()
         handler.postDelayed({
+            pinInput.requestFocus()
+            pinInput.dispatchWindowFocusChanged(true)
             val imm = getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager
             imm.showSoftInput(pinInput, InputMethodManager.SHOW_IMPLICIT)
-        }, 200)
+        }, 400)
     }
 
     // ==================== Admin Menu ====================
 
-    private fun showAdminMenu() {
+    private fun showAdminMenu(activeTab: String? = null) {
         Log.i(TAG, "Åpner admin-meny")
         val overlay = FrameLayout(this).apply {
             setBackgroundColor(Color.BLACK)
@@ -417,9 +427,9 @@ class KioskActivity : AppCompatActivity() {
             ).apply { bottomMargin = 12 })
         }
 
-        addMenuButton("Endre WiFi") { showWifiPicker(contentArea) }
-        addMenuButton("Endre URL") { showUrlEditor(contentArea) }
-        addMenuButton("Enhetsstatus") { showDeviceStatus(contentArea) }
+        addMenuButton("Endre WiFi") { hideKeyboard(); showWifiPicker(contentArea) }
+        addMenuButton("Endre URL") { hideKeyboard(); showUrlEditor(contentArea) }
+        addMenuButton("Enhetsstatus") { hideKeyboard(); showDeviceStatus(contentArea) }
         addMenuButton("Start på nytt") {
             val dpm = getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
             val cn = ComponentName(this, DeviceOwnerReceiver::class.java)
@@ -430,12 +440,24 @@ class KioskActivity : AppCompatActivity() {
         }
         addMenuButton("Gå til Android") {
             Log.i(TAG, "Avslutter kiosk-modus — går til Android")
-            try { stopLockTask() } catch (e: Exception) {
-                Log.e(TAG, "stopLockTask feilet: ${e.message}")
+            hideKeyboard()
+            val dpm = getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
+            val cn = ComponentName(this, DeviceOwnerReceiver::class.java)
+            if (dpm.isDeviceOwnerApp(packageName)) {
+                try { dpm.setLockTaskPackages(cn, arrayOf(packageName, "com.android.settings")) } catch (_: Exception) {}
+                try { dpm.setStatusBarDisabled(cn, false) } catch (_: Exception) {}
             }
+            try { stopLockTask() } catch (_: Exception) {}
+            // Start system-launcher (startsiden)
+            val homeIntent = Intent(Intent.ACTION_MAIN).apply {
+                addCategory(Intent.CATEGORY_HOME)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            startActivity(homeIntent)
             finish()
         }
         addMenuButton("Tilbake") {
+            hideKeyboard()
             root.removeView(overlay)
             adminOverlay = null
             hideSystemUI()
@@ -460,8 +482,11 @@ class KioskActivity : AppCompatActivity() {
             FrameLayout.LayoutParams.MATCH_PARENT
         ))
 
-        // Vis status som default
-        showDeviceStatus(contentArea)
+        // Vis aktiv fane
+        when (activeTab) {
+            "wifi" -> showWifiPicker(contentArea)
+            else -> showDeviceStatus(contentArea)
+        }
     }
 
     // ==================== WiFi Picker ====================
@@ -600,6 +625,11 @@ class KioskActivity : AppCompatActivity() {
             LinearLayout.LayoutParams.WRAP_CONTENT
         ).apply { bottomMargin = 24 })
 
+        val passwordRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+
         val passwordInput = EditText(this).apply {
             hint = "Passord"
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
@@ -609,7 +639,36 @@ class KioskActivity : AppCompatActivity() {
             setBackgroundColor(0xFF333333.toInt())
             setPadding(32, 24, 32, 24)
         }
-        layout.addView(passwordInput, LinearLayout.LayoutParams(
+        passwordRow.addView(passwordInput, LinearLayout.LayoutParams(
+            0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f
+        ))
+
+        val showPassBtn = Button(this).apply {
+            text = "Vis"
+            textSize = 14f
+            setBackgroundColor(0xFF555555.toInt())
+            setTextColor(Color.WHITE)
+            setPadding(24, 0, 24, 0)
+            var showing = false
+            setOnClickListener {
+                showing = !showing
+                if (showing) {
+                    passwordInput.inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD
+                    text = "Skjul"
+                } else {
+                    passwordInput.inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+                    text = "Vis"
+                }
+                passwordInput.setTextColor(Color.WHITE)
+                passwordInput.typeface = Typeface.DEFAULT
+                passwordInput.setSelection(passwordInput.text.length)
+            }
+        }
+        passwordRow.addView(showPassBtn, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.MATCH_PARENT
+        ).apply { leftMargin = 8 })
+
+        layout.addView(passwordRow, LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.MATCH_PARENT,
             LinearLayout.LayoutParams.WRAP_CONTENT
         ).apply { bottomMargin = 24 })
@@ -795,7 +854,8 @@ class KioskActivity : AppCompatActivity() {
                     return@setOnClickListener
                 }
 
-                // Lagre ny URL
+                // Gjem tastatur og lagre ny URL
+                hideKeyboard()
                 prefs.edit().putString("showroom_url", newUrl).apply()
                 statusLabel.text = "Lagret! Laster $newUrl..."
                 statusLabel.setTextColor(0xFF4CAF50.toInt())
@@ -821,7 +881,7 @@ class KioskActivity : AppCompatActivity() {
             FrameLayout.LayoutParams.MATCH_PARENT
         ))
 
-        urlInput.requestFocus()
+        // Ikke auto-fokuser — tastatur vises kun når bruker trykker i feltet
     }
 
     // ==================== Device Status ====================
@@ -871,6 +931,129 @@ class KioskActivity : AppCompatActivity() {
         ))
     }
 
+    // ==================== Branded Error Overlay ====================
+
+    @SuppressLint("SetTextI18n")
+    private fun showErrorOverlay() {
+        if (errorOverlay != null) return
+
+        val overlay = FrameLayout(this).apply {
+            setBackgroundColor(0xFF0A0A0A.toInt())
+            isClickable = true
+        }
+
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+        }
+
+        // Logo/tittel
+        val logo = TextView(this).apply {
+            text = "ShortShift"
+            textSize = 36f
+            setTextColor(Color.WHITE)
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+        }
+        content.addView(logo, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.WRAP_CONTENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT
+        ).apply { bottomMargin = 64 })
+
+        val statusText = TextView(this).apply {
+            text = "Kobler til nettverk..."
+            textSize = 22f
+            setTextColor(0xFFCCCCCC.toInt())
+            gravity = Gravity.CENTER
+        }
+        content.addView(statusText, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.WRAP_CONTENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT
+        ).apply { bottomMargin = 16 })
+
+        val countdownText = TextView(this).apply {
+            textSize = 16f
+            setTextColor(0xFF888888.toInt())
+            gravity = Gravity.CENTER
+        }
+        content.addView(countdownText, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.WRAP_CONTENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT
+        ).apply { bottomMargin = 48 })
+
+        val wifiBtn = Button(this).apply {
+            text = "Koble til WiFi"
+            textSize = 18f
+            setBackgroundColor(0xFF2196F3.toInt())
+            setTextColor(Color.WHITE)
+            setPadding(48, 24, 48, 24)
+            setOnClickListener {
+                dismissErrorOverlay()
+                showAdminMenu("wifi")
+            }
+        }
+        content.addView(wifiBtn, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.WRAP_CONTENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT
+        ))
+
+        overlay.addView(content, FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.WRAP_CONTENT,
+            FrameLayout.LayoutParams.WRAP_CONTENT
+        ).apply { gravity = Gravity.CENTER })
+
+        errorOverlay = overlay
+        root.addView(overlay, FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT,
+            FrameLayout.LayoutParams.MATCH_PARENT
+        ))
+
+        // Nedtelling og auto-retry
+        startRetryCountdown(countdownText, 10)
+    }
+
+    private fun startRetryCountdown(countdownText: TextView, seconds: Int) {
+        var remaining = seconds
+        retryCountdown?.let { handler.removeCallbacks(it) }
+
+        val tick = object : Runnable {
+            override fun run() {
+                if (remaining <= 0) {
+                    // Behold overlayen mens vi prøver — fjernes i onPageFinished ved suksess
+                    isShowingError = false
+                    val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+                    val url = prefs.getString("showroom_url", null)
+                    if (url != null) webView.loadUrl(url)
+                    // Start ny nedtelling i tilfelle retry også feiler
+                    remaining = 10
+                    handler.postDelayed(this, 1000)
+                    return
+                }
+                countdownText.text = "Prøver igjen om $remaining sekunder..."
+                remaining--
+                handler.postDelayed(this, 1000)
+            }
+        }
+        retryCountdown = tick
+        tick.run()
+    }
+
+    private fun dismissErrorOverlay() {
+        isShowingError = false
+        errorOverlay?.let {
+            root.removeView(it)
+            errorOverlay = null
+        }
+        retryCountdown?.let { handler.removeCallbacks(it) }
+        retryCountdown = null
+    }
+
+    private fun hideKeyboard() {
+        val imm = getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager
+        currentFocus?.let { imm.hideSoftInputFromWindow(it.windowToken, 0) }
+            ?: imm.hideSoftInputFromWindow(root.windowToken, 0)
+    }
+
     // ==================== Kiosk Lockdown ====================
 
     private fun enableKioskMode() {
@@ -882,6 +1065,7 @@ class KioskActivity : AppCompatActivity() {
 
             try { dpm.setKeyguardDisabled(componentName, true) } catch (_: Exception) {}
             try { dpm.setStatusBarDisabled(componentName, true) } catch (_: Exception) {}
+
 
             DeviceOwnerReceiver.enforceInputMethod(this, dpm, componentName)
 
@@ -925,10 +1109,11 @@ class KioskActivity : AppCompatActivity() {
 
         override fun onPageFinished(view: WebView?, url: String?) {
             progressBar.visibility = View.GONE
+            currentWebViewUrl = url
+            if (!isShowingError && url != null && url != "about:blank") dismissErrorOverlay()
             Log.i(TAG, "Page finished: $url")
         }
 
-        @SuppressLint("SetTextI18n")
         override fun onReceivedError(
             view: WebView?,
             request: WebResourceRequest?,
@@ -936,13 +1121,9 @@ class KioskActivity : AppCompatActivity() {
         ) {
             if (request?.isForMainFrame == true) {
                 progressBar.visibility = View.GONE
-                errorText.text = "Ingen internettilkobling.\nPrøver igjen om 10 sekunder..."
-                errorText.visibility = View.VISIBLE
-
-                view?.postDelayed({
-                    errorText.visibility = View.GONE
-                    view.reload()
-                }, 10_000)
+                isShowingError = true
+                view?.loadUrl("about:blank")
+                showErrorOverlay()
             }
         }
 

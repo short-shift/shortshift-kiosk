@@ -14,7 +14,6 @@ class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action == Intent.ACTION_BOOT_COMPLETED) {
             Log.i(TAG, "Boot fullført, starter ProvisioningActivity")
-
             val launchIntent = Intent(context, ProvisioningActivity::class.java).apply {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }

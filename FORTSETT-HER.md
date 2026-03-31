@@ -4,66 +4,62 @@
 Nexus erstatter Fully Kiosk Browser for ShortShift sine showroom-skjermer.
 Én app som håndterer alt: WiFi-oppsett, provisioning, kiosk-browser, fjernkontroll.
 
-## Status (2026-03-31)
+## Status (2026-03-31 kveld)
 
-### ✅ Fungerer og testet end-to-end:
-- **ShowroomNexus** (`window.fully` bridge) — GPS, touch-statistikk, alle 11 metoder
-- **Provisioning** — WiFi → kode → forhandlervalg → live
-- **Admin-meny** — 2x oppe-venstre + 2x nede-høyre + PIN → WiFi/URL/status
-- **ShortShift keyboard** tvunget som default, Gboard deaktivert
-- **Cloud-fjernkontroll** — Supabase Realtime WebSocket, instant kommandoer
-- **Backoffice Nexus-side** — /nexus med søk, alias, refresh/reboot/set_url, historikk
-- **On-demand heartbeat** — skjermen sender full device-status når dashboardet ber om det
-- **Dashboard-integrasjon** — plingplong, kart, klikk-statistikk fungerer via Azure
+### Testet og verifisert på rk3588 Android 12:
+- **Provisioning** — WiFi → kode 2222 → demo.shortshift.io → fungerer
+- **Cloud reboot** — fra /nexus i backoffice → fungerer (~30 sek)
+- **Admin-gest** — 2x oppe-venstre + 2x nede-høyre + PIN 3023 → fungerer
+- **"Gå til Android"** — åpner Android home, appen forblir lukket
+- **Branded feilside** — svart skjerm med "ShortShift"-logo, nedtelling, WiFi-knapp
+- **WiFi-knapp i feilside** — åpner admin-meny med WiFi-fanen aktiv (DRY)
+- **Vis/Skjul passord** — toggle-knapp i WiFi-passordfeltet
+- **Tastatur-logikk** — autofokus på PIN (eneste input), ingen autofokus på URL-editor
+- **WebView svart bakgrunn** — ingen hvit blink ved retry
+- **Setup-koder** — forblir aktive etter bruk, gjenbrukbare for mange skjermer
+- **CATEGORY_HOME fjernet** — ingen velger-dialog, BootReceiver starter appen
 
-### 🔒 Sikkerhetsoppgradering (branch: feature/secure-command-channel)
-CommandChannel omskrevet fra direkte Supabase WebSocket → sikker API-polling:
-- Fjernet hardkodet Supabase anon key og WebSocket
-- Polling hvert 30s via `commands-pending` med Bearer token
-- ACK via `commands-ack` med eierskapsverifisering
-- Heartbeat hvert 5 min via `provision-heartbeat` med full device-status
-- Piggyback: ventende kommandoer returneres i heartbeat-respons
-- **Provisioning-API** har nye endepunkter (branch: `feature/secure-device-api` i shortshift-provisioning)
+### Deployet til prod:
+- **shortshift-provisioning.netlify.app** — `feature/secure-device-api` med:
+  - Setup-koder brukes ikke opp (attempt_count inkrementeres)
+  - expires_at valgfri (null = uendelig)
 
-### ⏳ Neste steg (Sprint 1 gjenstår):
-1. **Factory reset-beskyttelse** — hardware_id-gjenkjenning ved re-provisioning
-2. **minSdk 28 → 24** — støtte Android 7-skjermer (verifiser WebView på rk3399 først)
-3. **RLS-migrasjon** — stram inn `device_commands` (KUN etter alle skjermer er oppdatert)
+### Kjente problemer å fikse:
+1. **Heartbeat thread-bug** — FIKSET i kode (currentWebViewUrl), men commands-pending gir 404 (endepunktet mangler på deployet API)
+2. **PIN-tastatur** — SHOW_IMPLICIT fungerer ikke alltid i lock task mode, tastatur dukker ikke alltid opp automatisk
+3. **Vis/Skjul passord** — fungerer men kan fryse visuelt ved rask klikking
 
-### ⏳ Sprint 2: Push + skalering
-4. **FCM-integrasjon** — instant kommandoer via Firebase push (erstatter polling-kostnad)
-5. **Heartbeat piggyback** — kommandoer i heartbeat-respons (allerede implementert server-side)
-6. **Lasttest** — simuler 700 skjermer
-
-### ⏳ Sprint 3: SSH-infrastruktur
-7. **Headscale-server** — self-hosted VPN for SSH-nødtilgang til alle 700+ skjermer
-8. **Tailscale APK** preinstallert i fabrikk-image
-9. **SSH-daemon** (dropbear) i fabrikk-image
-
-### ⏳ Sprint 4: Flåtemigrering
-10. Pilot (10-20 skjermer) → validere → gradvis migrering av 700 skjermer fra Fully → Nexus
-
-### ⏳ Øvrig gjenstår:
-- **Nexus-UI** — vis all device-status (WiFi, GPS, IP, RAM, uptime)
-- **Screenshot** — ta bilde av skjermen remotely
-- **Produksjons-hardening** — disable USB, factory reset, safe boot
-- **OTA app-oppdatering**
-
-## Repoer
-
-| Repo | Branch | Hva |
-|------|--------|-----|
-| `short-shift/nexus` | main | Android kiosk-app (Kotlin) |
-| `short-shift/shortshift-provisioning` | main | Provisioning API (Netlify) |
-| `short-shift/shortshift-backoffice` | feature/ztp-provisioning | Nexus fjernkontroll-side |
-
-## Supabase-endringer (2026-03-30)
-- `device_commands`-tabell med Realtime + RLS
-- `screens`: nye kolonner (alias, device_type, android_version, wifi_ssid, wifi_signal_dbm, ip_address, latitude, longitude, current_url, screen_on, uptime_seconds, free_memory_mb, mac_address)
+### Ucommittede endringer (MÅ COMMITTES):
+- `AndroidManifest.xml` — CATEGORY_HOME fjernet
+- `BootReceiver.kt` — forenklet, ingen claimHomeActivity
+- `KioskActivity.kt` — branded feilside, tastatur-fixes, "Gå til Android" via HOME intent, WiFi vis/skjul passord
+- `docs/MASS-PROVISIONING.md` — plan for BLE + USB masse-provisjonering
 
 ## Test-skjerm
-- Screen ID: `0de63926-f472-4f35-83d5-6d503564adfb`
-- Setup-kode: `1111` → demo.shortshift.io (utløper 2. april)
+- **Ny skjerm (23.8"):** Serial `2FD2534003843838`, rk3588 Android 12
+- **Gammel skjerm (32"):** Serial `2FD2523012756961` — DEFEKT backlight, ikke bruk
+- **Viktig:** ANDROID_ID er app-scoped på Android 8+, ADB gir annen verdi enn appen sender
+
+## Fjerne Fully som device owner
+1. Åpne Fully sin innstillingsmeny PÅ SKJERMEN
+2. Søk etter "owner"
+3. Skru av device owner-funksjonen
+4. ADB: `adb shell pm disable-user --user 0 com.fullykiosk.emm`
+5. ADB: `adb install -r app-debug.apk`
+6. ADB: `adb shell dpm set-device-owner com.shortshift.kiosk/.DeviceOwnerReceiver`
+
+## Provisioning-koder
+- Kode **2222** — aktiv, demo.shortshift.io, utløper 7. april
+- Koder forblir aktive etter bruk (ny logikk deployet)
+- Forhandler: Bilia Hamar Volvo & XPENG
+
+## Neste steg
+1. **Commit ucommittede endringer**
+2. **Deploy commands-pending** — mangler på provisioning-API (gir 404)
+3. **Factory reset-beskyttelse** — hardware_id-gjenkjenning ved re-provisioning
+4. **Mass provisioning** — BLE (primær) + USB (backup), se `docs/MASS-PROVISIONING.md`
+5. **Branded feilside polish** — logo som bilde, animasjon, bedre layout
+6. **Custom firmware** — pre-install Nexus + keyboard, fjern Fully/bloatware
 
 ## Bygg og test
 ```bash
@@ -74,23 +70,36 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 adb reboot
 ```
 
+## Repoer
+
+| Repo | Branch | Hva |
+|------|--------|-----|
+| `short-shift/nexus` | feature/secure-command-channel | Android kiosk-app (Kotlin) |
+| `short-shift/shortshift-provisioning` | feature/secure-device-api | Provisioning API (Netlify) — DEPLOYET |
+| `short-shift/shortshift-backoffice` | feature/ztp-provisioning | Nexus fjernkontroll-side |
+
 ## Roadmap
 
 ### Fase 1: Cloud-fjernkontroll ← PÅGÅR
-- [x] WebSocket kommando-kanal
-- [x] Backoffice Nexus-side
-- [x] On-demand heartbeat
+- [x] Provisioning (WiFi → kode → URL)
+- [x] Cloud reboot fra /nexus
+- [x] Admin-meny med PIN
+- [x] Branded feilsider
+- [x] "Gå til Android"
+- [ ] commands-pending endepunkt (deployes)
 - [ ] Komplett device-status i UI
-- [ ] Screenshot
+- [ ] Screenshot-funksjon
 
-### Fase 2: Selger-verktøy
-Se [docs/PERSONLIG-SHOWROOM.md](docs/PERSONLIG-SHOWROOM.md)
+### Fase 2: Mass Provisioning
+- [ ] BLE broadcast fra mobil/web
+- [ ] USB-config backup
+- Se `docs/MASS-PROVISIONING.md`
 
-### Fase 3: Presence Detection
-Se [docs/SENSOR-STRATEGI.md](docs/SENSOR-STRATEGI.md)
+### Fase 3: SSH-infrastruktur
+- [ ] Headscale-server
+- [ ] Tailscale APK i firmware
 
-### Fase 4: Intelligent Showroom
-Bip AI, demografi, importør-dashboard
+### Fase 4: Flåtemigrering
+- [ ] Pilot 10-20 skjermer → gradvis migrering av 700 fra Fully
 
 **Full plan:** `.claude/plans/atomic-tickling-thunder.md`
-**Strategidokumenter:** [docs/HVORFOR-EGEN-APP.md](docs/HVORFOR-EGEN-APP.md)
